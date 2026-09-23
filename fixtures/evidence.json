@@ -1,0 +1,63 @@
+{
+  "synthetic": true,
+  "sources": [
+    {
+      "id": "S1",
+      "title": "Synthetic pilot A log",
+      "detail": "Invented fixture; 30 cases; total handling time 360 minutes."
+    },
+    {
+      "id": "S2",
+      "title": "Synthetic pilot B log",
+      "detail": "Invented fixture; 30 cases; total handling time 270 minutes."
+    },
+    {
+      "id": "S3",
+      "title": "Synthetic evaluation protocol",
+      "detail": "Invented fixture; convenience samples, no random assignment; timing only."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E1",
+      "source_id": "S1",
+      "value": 12,
+      "unit": "minutes per case",
+      "sample_size": 30
+    },
+    {
+      "id": "E2",
+      "source_id": "S2",
+      "value": 9,
+      "unit": "minutes per case",
+      "sample_size": 30
+    },
+    {
+      "id": "E3",
+      "source_id": "S3",
+      "text": "Convenience samples were not randomized; case mix may differ."
+    }
+  ],
+  "calculations": [
+    {
+      "id": "D1",
+      "operation": "relative_reduction_percent",
+      "input_ids": [
+        "E1",
+        "E2"
+      ],
+      "value": 25,
+      "unit": "percent"
+    },
+    {
+      "id": "D2",
+      "operation": "absolute_difference",
+      "input_ids": [
+        "E1",
+        "E2"
+      ],
+      "value": 3,
+      "unit": "minutes per case"
+    }
+  ]
+}

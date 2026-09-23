@@ -1,0 +1,119 @@
+{
+  "items": [
+    {
+      "id": "C1",
+      "title": "Pilot B recorded lower handling time",
+      "text": "Synthetic illustration only: timing supports further evaluation, not a rollout decision.",
+      "evidence_ids": [
+        "E1",
+        "E2",
+        "D1",
+        "E3"
+      ]
+    },
+    {
+      "id": "C2",
+      "title": "Decision",
+      "text": "Decide whether to run a larger controlled evaluation of pilot B.",
+      "evidence_ids": [
+        "E3"
+      ]
+    },
+    {
+      "id": "C3",
+      "title": "Scope",
+      "text": "Two synthetic pilots; 30 cases each. Handling time is the only measured outcome.",
+      "evidence_ids": [
+        "E1",
+        "E2",
+        "E3"
+      ]
+    },
+    {
+      "id": "C4",
+      "title": "Evaluation criteria",
+      "text": "Compare minutes per case, sample size, and strength of inference. Quality and cost remain unmeasured.",
+      "evidence_ids": [
+        "E3"
+      ]
+    },
+    {
+      "id": "C5",
+      "title": "Approach A",
+      "text": "12 minutes per case; n = 30. Synthetic pilot A log.",
+      "evidence_ids": [
+        "E1"
+      ]
+    },
+    {
+      "id": "C6",
+      "title": "Approach B",
+      "text": "9 minutes per case; n = 30. Synthetic pilot B log.",
+      "evidence_ids": [
+        "E2"
+      ]
+    },
+    {
+      "id": "C7",
+      "title": "Common qualification",
+      "text": "Convenience samples were not randomized; case mix may differ.",
+      "evidence_ids": [
+        "E3"
+      ]
+    },
+    {
+      "id": "C8",
+      "title": "Finding",
+      "text": "B recorded 3 fewer minutes per case: (12 \u2212 9) / 12 \u00d7 100 = 25% lower than A.",
+      "evidence_ids": [
+        "E1",
+        "E2",
+        "D1",
+        "D2"
+      ]
+    },
+    {
+      "id": "C9",
+      "title": "Interpretation",
+      "text": "The timing difference motivates a controlled follow-up using comparable cases.",
+      "evidence_ids": [
+        "E1",
+        "E2",
+        "E3"
+      ]
+    },
+    {
+      "id": "C10",
+      "title": "Limits",
+      "text": "This fixture cannot establish causality, statistical significance, quality, cost, or real-world effectiveness.",
+      "evidence_ids": [
+        "E3"
+      ]
+    }
+  ],
+  "charts": [
+    {
+      "id": "CH1",
+      "title": "Mean handling time",
+      "unit": "minutes per case",
+      "categories": [
+        "Approach A",
+        "Approach B"
+      ],
+      "evidence_ids": [
+        "E1",
+        "E2"
+      ]
+    }
+  ],
+  "metrics": [
+    {
+      "id": "M1",
+      "calculation_id": "D1",
+      "label": "lower mean handling time\nB versus A",
+      "evidence_ids": [
+        "D1"
+      ]
+    }
+  ]
+}

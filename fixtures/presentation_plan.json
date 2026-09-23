@@ -1,0 +1,91 @@
+{
+  "slides": [
+    {
+      "id": "SL1",
+      "layout": "hero",
+      "principal_message": "Pilot B recorded lower handling time",
+      "content_ids": [
+        "C1",
+        "C7"
+      ],
+      "purpose": "Establish the principal finding",
+      "evidence_ids": [
+        "E1",
+        "E2",
+        "D1"
+      ],
+      "metric_id": "M1"
+    },
+    {
+      "id": "SL2",
+      "layout": "context",
+      "principal_message": "Evaluate timing before deciding on a larger trial",
+      "content_ids": [
+        "C2",
+        "C3",
+        "C4"
+      ],
+      "purpose": "Align decision, scope and criteria",
+      "evidence_ids": [
+        "E3"
+      ]
+    },
+    {
+      "id": "SL3",
+      "layout": "comparison",
+      "principal_message": "Compare both pilots on common criteria",
+      "content_ids": [
+        "C5",
+        "C6",
+        "C7"
+      ],
+      "purpose": "Compare evidence and provenance",
+      "evidence_ids": [
+        "E1",
+        "E2"
+      ]
+    },
+    {
+      "id": "SL4",
+      "layout": "chart",
+      "principal_message": "B recorded 25% lower mean handling time",
+      "content_ids": [
+        "C8",
+        "C7"
+      ],
+      "purpose": "Quantify the observed difference",
+      "chart_id": "CH1",
+      "evidence_ids": [
+        "D1"
+      ]
+    },
+    {
+      "id": "SL5",
+      "layout": "interpretation",
+      "principal_message": "A timing difference is not causal evidence",
+      "content_ids": [
+        "C8",
+        "C9",
+        "C10",
+        "C7"
+      ],
+      "purpose": "Separate finding, interpretation and limitations",
+      "evidence_ids": [
+        "E3"
+      ]
+    },
+    {
+      "id": "SL6",
+      "layout": "references",
+      "principal_message": "All sources are synthetic and traceable",
+      "content_ids": [],
+      "purpose": "Resolve all source citations",
+      "evidence_ids": [],
+      "source_ids": [
+        "S1",
+        "S2",
+        "S3"
+      ]
+    }
+  ]
+}

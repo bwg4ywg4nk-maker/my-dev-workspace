@@ -1,0 +1,17 @@
+{
+  "font": "Arial",
+  "width": 13.333333,
+  "height": 7.5,
+  "colors": {
+    "background": "F5F7FA",
+    "ink": "172B4D",
+    "muted": "40536D",
+    "accent": "007F82"
+  },
+  "type": {
+    "title": 28,
+    "body": 18,
+    "citation": 12,
+    "metric": 52
+  }
+}
