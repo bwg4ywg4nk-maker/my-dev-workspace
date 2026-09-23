@@ -1,5 +1,11 @@
 # Milestone 1: synthetic pilot presentation
 
+Milestone 2 Phase 1 adds an independent local evidence contract and immutable
+source capture API. See [the Phase 1 contract](docs/milestone2_phase1.md) for
+encoding, identity, locator, storage and security rules. It does not change the
+Milestone 1 build or extract evidence. The test command below discovers both
+milestones' tests; all temporary test files remain inside this repository.
+
 Builds exactly six slides, entirely offline after dependency installation. Every source is invented and prominently labeled synthetic. The deck supports a controlled follow-up decision, not a real-world effectiveness claim.
 
 ## Run and verify
