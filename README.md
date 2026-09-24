@@ -21,6 +21,19 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m presentation_agent.
 
 ## Artifact boundaries
 
+Phase 2D.2 runs the fixed normalized-evidence demo through the existing six-slide pipeline:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m presentation_agent.milestone2_demo
+```
+
+It atomically publishes `output/milestone2_phase2d2/deck.pptx` after structural
+and rebuild QA. See [the Phase 2D.2 contract](docs/milestone2_phase2d2.md) for
+source selectors and retained in-memory provenance. The visible quality/cost
+qualification remains unverified authored metadata; source reproduction does
+not establish truth, and structural QA does not establish visual fit or desktop
+PowerPoint behavior.
+
 - `fixtures/evidence.json`: three synthetic sources, stable evidence IDs, units, samples, qualification and explicit absolute/relative derivations.
 - `fixtures/content.json`: substantive claims, evidence links and semantic chart selection.
 - `fixtures/presentation_plan.json`: ordered messages, content selections, layout names and purposes, without coordinates.
