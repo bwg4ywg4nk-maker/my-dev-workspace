@@ -90,10 +90,10 @@ class SourceStore:
         self.max_source_bytes = max_source_bytes
 
     @contextmanager
-    def _storage(self):
+    def _storage(self, create=False):
         with _directory(None, str(self.root)) as root:
-            with _directory(root, ".runtime", create=True) as runtime:
-                with _directory(runtime, "snapshots", create=True) as snapshots:
+            with _directory(root, ".runtime", create=create) as runtime:
+                with _directory(runtime, "snapshots", create=create) as snapshots:
                     yield snapshots
 
     def _read_source(self, parts):
@@ -131,7 +131,7 @@ class SourceStore:
         data = self._read_source(parts)
         identity = snapshot_identity(data)
         name = identity.split(":", 1)[1]
-        with self._storage() as storage:
+        with self._storage(create=True) as storage:
             try:
                 self._verified_read(storage, name, identity)
             except FileNotFoundError:
