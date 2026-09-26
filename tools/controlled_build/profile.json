@@ -1,0 +1,49 @@
+{
+  "kind": "pillow-basic-phase1-recipe-v1",
+  "sources": {
+    "freetype": {
+      "version": "2.14.3",
+      "url": "https://github.com/freetype/freetype/archive/refs/tags/VER-2-14-3.tar.gz",
+      "sha256": "dc49de6b01a266eef4876a4dd34d9842c475d3e28ff2eff63bd2fb760ab56261",
+      "root": "freetype-VER-2-14-3"
+    },
+    "pillow": {
+      "version": "12.3.0",
+      "url": "https://github.com/python-pillow/Pillow/archive/refs/tags/12.3.0.tar.gz",
+      "sha256": "d7ce60fdf8b3d3b4370ea213834d7c852b1ca16396d4e75e5046be815b11b2fb",
+      "root": "Pillow-12.3.0"
+    }
+  },
+  "freetype_modules": [
+    ["FT_Driver_ClassRec", "tt_driver_class"],
+    ["FT_Module_Class", "sfnt_module_class"],
+    ["FT_Renderer_Class", "ft_smooth_renderer_class"]
+  ],
+  "freetype_sources": [
+    "base/ftbase.c", "base/ftbbox.c", "base/ftbitmap.c", "base/ftdebug.c",
+    "base/ftglyph.c", "base/ftinit.c", "base/ftmm.c", "base/ftstroke.c",
+    "base/ftsystem.c", "sfnt/sfnt.c", "smooth/smooth.c",
+    "truetype/truetype.c"
+  ],
+  "freetype_undefines": [
+    "AF_CONFIG_OPTION_CJK", "AF_CONFIG_OPTION_INDIC",
+    "FT_CONFIG_OPTION_ADOBE_GLYPH_LIST", "FT_CONFIG_OPTION_ENVIRONMENT_PROPERTIES",
+    "FT_CONFIG_OPTION_GUESSING_EMBEDDED_RFORK", "FT_CONFIG_OPTION_INCREMENTAL",
+    "FT_CONFIG_OPTION_MAC_FONTS", "FT_CONFIG_OPTION_POSTSCRIPT_NAMES",
+    "FT_CONFIG_OPTION_SVG", "FT_CONFIG_OPTION_SYSTEM_ZLIB",
+    "FT_CONFIG_OPTION_USE_BROTLI", "FT_CONFIG_OPTION_USE_BZIP2",
+    "FT_CONFIG_OPTION_USE_HARFBUZZ", "FT_CONFIG_OPTION_USE_HARFBUZZ_DYNAMIC",
+    "FT_CONFIG_OPTION_USE_LZW", "FT_CONFIG_OPTION_USE_PNG", "FT_CONFIG_OPTION_USE_ZLIB",
+    "FT_DEBUG_AUTOFIT", "FT_DEBUG_LEVEL_ERROR", "FT_DEBUG_LEVEL_TRACE",
+    "FT_DEBUG_LOGGING", "FT_DEBUG_MEMORY",
+    "TT_CONFIG_CMAP_FORMAT_0", "TT_CONFIG_CMAP_FORMAT_2", "TT_CONFIG_CMAP_FORMAT_6",
+    "TT_CONFIG_CMAP_FORMAT_8", "TT_CONFIG_CMAP_FORMAT_10", "TT_CONFIG_CMAP_FORMAT_13",
+    "TT_CONFIG_CMAP_FORMAT_14", "TT_CONFIG_OPTION_BDF", "TT_CONFIG_OPTION_COLOR_LAYERS",
+    "TT_CONFIG_OPTION_EMBEDDED_BITMAPS", "TT_CONFIG_OPTION_GX_VAR_SUPPORT",
+    "TT_CONFIG_OPTION_POSTSCRIPT_NAMES"
+  ],
+  "pillow_disabled": [
+    "avif", "fribidi", "harfbuzz", "imagequant", "jpeg", "jpeg2000", "lcms",
+    "platform-guessing", "raqm", "tiff", "tk", "webp", "xcb", "zlib"
+  ]
+}

@@ -1,0 +1,15 @@
+--- a/src/_imagingft.c
++++ b/src/_imagingft.c
+@@ -1511,8 +1511,11 @@
+     }
+     PyObject_Del(self);
+ }
+-
++
++#include "pa_cmap_audit.h"
++
+ static PyMethodDef font_methods[] = {
++    {"_pa_cmap_audit", (PyCFunction)pa_cmap_audit, METH_NOARGS},
+     {"render", (PyCFunction)font_render, METH_VARARGS},
+     {"getsize", (PyCFunction)font_getsize, METH_VARARGS},
+     {"getlength", (PyCFunction)font_getlength, METH_VARARGS},
