@@ -158,9 +158,9 @@ class BuildEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'binding unavailable'):
                 layout._open_provider(item)
         core = _PillowBasicCore.__new__(_PillowBasicCore)
-        with patch('presentation_agent._pillow_basic._inspect_sfnt'):
-            with self.assertRaisesRegex(ValueError, 'not yet bound'):
-                core.inspect_font(b'unit test', SimpleNamespace(font=SimpleNamespace(face_index=0)))
+        with patch('presentation_agent._pillow_basic._inspect_sfnt') as inspect:
+            result = core.inspect_font(b'unit test', SimpleNamespace(font=SimpleNamespace(face_index=0)))
+            self.assertIs(result, inspect.return_value)
 
 
 class AuditSchemaTests(unittest.TestCase):

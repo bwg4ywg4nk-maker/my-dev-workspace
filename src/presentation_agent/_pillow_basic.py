@@ -314,21 +314,48 @@ def _pillow_capability():
     return ImageFont, engine
 
 
-class _PillowBasicCore:
-    """Unqualified private primitives, matching layout's raw-font seam.
+def _audit_font(font, inspection):
+    """Compare the same measurement face with the authoritative pure parser.
 
-    Loading primitives are individually testable, but inspect_font deliberately
-    prevents this object from serving as a complete provider. A future trusted
-    bootstrap must bind the native audit proving precisely the inspected cmap
-    set and glyph interpretation. No boolean or caller token can open that gate.
+    The Phase-1 interface exposes metadata, not SFNT subtable offsets. Preserve
+    candidate order and multiplicity when comparing its observable descriptors.
+    This agreement check does not qualify a build or runtime.
+    """
+    from ._build_evidence import validate_audit
+    _require(type(inspection) is _Inspection, 'Expected pure SFNT inspection')
+    try:
+        value = font.font._pa_cmap_audit()
+    except MemoryError:
+        raise
+    except Exception as exc:
+        raise ValueError('Native cmap agreement audit failed: ' + str(exc)) from exc
+    _, maps, selected, original, _, restored = validate_audit(value)
+    candidates = tuple(item for item in maps
+                       if item[1] == 0 or (item[1] == 3 and item[2] in (1, 10)))
+    expected = tuple(item[:3] for item in inspection.candidates)
+    observed = tuple((item[1], item[2], item[4]) for item in candidates)
+    _require(observed == expected, 'Native cmap candidate count/order mismatch')
+    for item in candidates:
+        _require(item[5] == inspection.ascii_glyphs, 'Native cmap glyph mismatch')
+    _require(maps[selected][5] == original == restored == inspection.ascii_glyphs,
+             'Native selected cmap agreement mismatch')
+
+
+class _PillowBasicCore:
+    """Unqualified private primitives; pass 10 still owns the closed runtime gate.
+
+    Pass 11 parses before loading, then audits each same measurement face. These
+    checks alone provide no lifecycle, build, or runtime qualification.
     """
 
     def __init__(self):
         self._image_font, self.basic_engine = _pillow_capability()
 
     def inspect_font(self, data, profile):
-        _inspect_sfnt(data, profile.font.face_index)
-        raise ValueError('Native build/font cmap agreement audit is not yet bound')
+        return _inspect_sfnt(data, profile.font.face_index)
+
+    def audit_font(self, font, inspection):
+        _audit_font(font, inspection)
 
     def load_font(self, data, *, size, index, encoding, layout_engine):
         # This low-level primitive neither parses nor certifies the font. The

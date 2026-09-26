@@ -346,13 +346,14 @@ class ProviderTests(unittest.TestCase):
                 self.assertEqual(image_font.FreeTypeFont.call_count, 1)
             image_font.truetype.assert_not_called()
 
-    def test_unproved_native_agreement_blocks_seam_before_loads(self):
+    def test_missing_native_audit_blocks_seam_after_first_load(self):
         with fake_pillow() as (_, image_font):
             core = p._PillowBasicCore()
-            # A valid synthetic inspection cannot confer native qualification.
+            image_font.FreeTypeFont.return_value = SimpleNamespace(
+                layout_engine=core.basic_engine, getname=lambda: ('Arial', 'Regular'))
             with self.assertRaisesRegex(ValueError, 'cmap agreement audit'):
                 l._load_fonts(core, bytes(sfnt()), profile())
-            image_font.FreeTypeFont.assert_not_called()
+            self.assertEqual(image_font.FreeTypeFont.call_count, 1)
 
     def test_raw_fonts_feed_existing_exact_measurement_seam(self):
         # A synthetic provider and synthetic native fonts exercise integration;

@@ -885,7 +885,7 @@ def _open_provider(profile):
 
 
 def _load_fonts(provider, font_bytes, profile):
-    provider.inspect_font(font_bytes, profile)
+    inspection = provider.inspect_font(font_bytes, profile)
     fonts = {}
     for size in _SIZES:
         font = provider.load_font(font_bytes, size=size // 100, index=0,
@@ -897,6 +897,8 @@ def _load_fonts(provider, font_bytes, profile):
         for item in name:
             _exact(item, str)
         _require(name == (profile.font.family, profile.font.style), 'Font name mismatch')
+        if inspection is not None:
+            provider.audit_font(font, inspection)
         fonts[size] = font
     return fonts
 
