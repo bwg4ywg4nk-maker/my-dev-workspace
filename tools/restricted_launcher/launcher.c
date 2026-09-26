@@ -1,4 +1,4 @@
-/* Phase 2 only. No Python headers, linkage, initialization or qualification. */
+/* Restricted native launcher. Python APIs are resolved only after verified load. */
 #include <dlfcn.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -102,6 +102,8 @@ static void *verified_load(char *const *env, size_t count,
     return dlopen(path, RTLD_NOW | RTLD_LOCAL);
 }
 
+#include "bootstrap.c"
+
 int main(void) {
 #ifdef __APPLE__
     int mib[] = {CTL_KERN, KERN_PROCARGS2, (int)getpid()};
@@ -114,7 +116,11 @@ int main(void) {
         original_record(buf, size, env, &count))
         handle = verified_load(env, count, NULL, 0, NULL, &closed);
     free(buf);
-    if (handle) dlclose(handle);
+    if (handle) {
+        /* No verified deployment search paths are authorized yet. */
+        (void)isolated_bootstrap(handle, NULL, 0);
+        /* Process-lifetime Python references: never unload a live runtime. */
+    }
 #endif
     fputs("restricted launcher: deployment unavailable; qualification denied\n", stderr);
     return 78;

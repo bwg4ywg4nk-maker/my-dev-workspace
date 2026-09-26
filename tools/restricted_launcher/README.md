@@ -1,10 +1,12 @@
-# Phase 2 restricted native launcher foundation
+# Restricted native launcher: Phase 3 bootstrap
 
-Compile with the existing Apple tools (no Python linkage):
+Compile with existing Apple tools and CPython 3.14 headers (no Python linkage):
 
 ```sh
 mkdir -p build/phase2
-clang -std=c11 -Wall -Wextra -Werror tools/restricted_launcher/launcher.c -o build/phase2/launcher
+clang -std=c11 -Wall -Wextra -Werror \
+  -I/Library/Frameworks/Python.framework/Versions/3.14/include/python3.14 \
+  tools/restricted_launcher/launcher.c -o build/phase2/launcher
 ```
 
 The native entry reads macOS `KERN_PROCARGS2` for its own original exec
@@ -21,11 +23,27 @@ single `dlopen` call. Implementations must establish artifact binding and
 prevent substitution between verification and load; these are interfaces,
 not implemented production verification. There is no search-path fallback.
 
-Production supplies no verifiers or framework and always exits 78. No Python
-initialization, lifecycle record, qualification token, setter, or provider
-activation exists. Loader hardening, concrete deployment identities/verifiers,
-isolated Python startup and lifecycle integration remain deferred. This is
-not yet a trusted production launch, including against pre-main loader effects.
+Production supplies no verifiers, framework, or verified search paths and always
+exits 78. After verified load, the private native bootstrap resolves CPython APIs
+from that handle and rejects versions other than 3.14 or an already initialized
+interpreter. Isolated configuration disables environment processing, site, user
+site, argv parsing, and bytecode writes; enables safe path; and uses only the
+explicit absolute module search paths covered by runtime artifact verification.
+The fixed native bootstrap entry returns false and never opens a provider.
+
+Native process-lifetime state records the original PID, retained module/callable
+and search-path identities, and a copy of the current native environment. Boundary
+checks reject fork inheritance, module dictionary replacement or mutation,
+search-path replacement or mutation, and environment changes. Observed failure
+or any second startup attempt irreversibly invalidates the lifecycle. There is
+no reset or Python qualification API. Retained references are intentionally kept
+until process exit; a live interpreter's framework must not be unloaded.
+
+Checks cover this controlled bootstrap boundary, not arbitrary hostile Python,
+transient mutations restored before a check, or future provider state. No provider
+is active and no Python-side environment mapping is used by this bootstrap.
+Concrete deployment verifiers, loader hardening, provider qualification/binding,
+and pass-11 integration remain deferred and fail closed.
 
 Tests compile a separate native harness with a fake loader to check sequencing
 and failure injection; its successful load is not runtime qualification. They
@@ -34,4 +52,11 @@ Generated binaries remain under ignored `build/phase2-unit/`.
 
 ```sh
 PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -p 'test_milestone3_phase3c2b_launcher.py'
+```
+
+Phase-3 tests use the existing local CPython 3.14 framework to exercise bootstrap
+mechanics, not deployment provenance or qualification:
+
+```sh
+PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -p 'test_milestone3_phase3c2b_bootstrap.py'
 ```

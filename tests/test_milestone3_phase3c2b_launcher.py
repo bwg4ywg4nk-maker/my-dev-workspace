@@ -3,6 +3,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import unittest
 
@@ -119,7 +120,7 @@ class LauncherTests(unittest.TestCase):
             f'#include "{SOURCE}"\n#undef main\n#undef dlopen\n' + HARNESS)
         for src, output in ((SOURCE, cls.launcher), (source, cls.harness)):
             subprocess.run(['clang', '-std=c11', '-Wall', '-Wextra', '-Werror',
-                            str(src), '-o', str(output)], check=True, capture_output=True)
+                            '-I' + sysconfig.get_path('include'), str(src), '-o', str(output)], check=True, capture_output=True)
 
     def test_exact_environment_admission(self):
         subprocess.run([str(self.harness), 'environment'], check=True)
