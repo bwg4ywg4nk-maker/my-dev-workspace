@@ -59,9 +59,53 @@ must be retained by the deployment owner; collecting new hashes is not proof of
 trusted provenance. This offline check does not prevent replacement before load,
 verify currently loaded images, or qualify a fresh process.
 
-Supported native inputs are thin little-endian 64-bit Mach-O images for arm64 or
-x86_64 with absolute dependency names. Universal binaries, relative or `@rpath`
-dependencies, loader environment commands, and runtime search-path commands
-reject. Shared-cache-only system images without readable matching files also
-reject; no placeholder digest or fallback is produced. No concrete local
-runtime deployment is claimed by the synthetic focused tests.
+Supported standalone native inputs are thin little-endian 64-bit Mach-O images
+for arm64 or x86_64 with absolute dependency names. Universal binaries, relative
+or `@rpath` dependencies, loader environment commands, and runtime search-path
+commands reject. No concrete local runtime deployment is claimed by synthetic
+focused tests.
+
+## Phase 4.5A3 shared-cache evidence
+
+An explicitly selected missing system-library path under `/usr/lib/` or
+`/System/Library/` may instead bind to the collecting process's active dyld
+shared cache. Interpreter, framework, launcher/bootstrap, loader, and controlled
+Pillow extensions still require standalone files. `_shared_cache.collect` reads
+the active base/range through dyld and reads memory through Mach, without
+loading or extracting any dylib. It finds the matching header in the system
+cache directories; missing or ambiguous matches reject. The supported format is
+the Monterey dyld v1 456-byte header with 24-byte numbered subcache entries.
+Other formats fail closed, including later suffix-based subcache layouts.
+The parser follows Apple's
+[cache format definitions](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/dyld_cache_format.h).
+
+Every declared subcache and, when declared, symbols file must exist. SHA-256
+covers every byte of each complete file, including unmapped trailers. Cache and
+subcache UUIDs, header bytes, architecture, slide, and VM offsets are consistency
+checks, never substitutes for these hashes. Overlapping/out-of-bounds mappings,
+changed file identity/stat metadata, and missing or mismatched mappings reject.
+The collector walks live VM submaps and compares all immutable cache ranges
+byte-for-byte, requiring their current and maximum protections to agree. It
+checks mutable ranges are readable and non-executable, but does not claim their
+rebased/COW bytes or maximum protections equal the on-disk representation.
+
+Required image paths must occur in the cache image table. Their headers/load
+commands must lie in verified immutable mappings and identify the expected
+architecture, cached dylib, exact install name, UUID command, segment mappings,
+and absolute dependencies. Cache dependency closure is included automatically;
+additional images use deterministic `shared-cache-image-<SHA256(install-name)>`
+logical roles. Missing closure members reject. No image is extracted.
+
+The deployment document gains `shared_cache` containing complete file digests,
+mapping records/immutable-range digests, and selected image metadata. A cached
+native artifact digest binds this entire cache-evidence document and that
+image's metadata. System install names and unslid addresses identify entries
+inside the cache; deployment file locations and ASLR slide do not enter
+identities. The frozen runtime-manifest schema is unchanged.
+
+This remains evidence collection, not trusted provenance, provider activation,
+or a guarantee about later launcher mappings. The deployment owner must retain
+expected evidence in protected storage. Before loading, a launcher must verify
+the selected cache set and immutable mappings again and protect the expected
+evidence, files, and resolution paths against replacement. Mutable state and
+controlled initialization remain separate launcher obligations.

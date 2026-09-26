@@ -2,7 +2,8 @@
 
 Absolute locations are inputs only. Identities use logical roles and relative
 module names. Deliberately supports thin, little-endian 64-bit Mach-O with
-absolute dependency names only. Shared-cache-only images are unsupported.
+absolute dependency names only. Missing system images may bind to the active
+dyld shared cache through separately verified whole-cache evidence.
 """
 from hashlib import sha256
 from importlib.machinery import (ExtensionFileLoader, FileFinder, SourceFileLoader,
@@ -146,7 +147,10 @@ def _hash(path):
 
 def _dependencies(path, architecture):
     """Read load commands, not external tool output or caller dependency claims."""
-    data = path.read_bytes()
+    return _dependencies_bytes(path.read_bytes(), architecture)
+
+
+def _dependencies_bytes(data, architecture):
     _require(len(data) >= 32, 'Mach-O header')
     magic, cpu, _, _, count, size, _, _ = struct.unpack_from('<8I', data)
     _require(magic == 0xFEEDFACF and cpu == {'x86_64': 0x1000007,
@@ -210,7 +214,27 @@ def collect(build, build_files, native_files, module_paths, runtime):
         _string(name, 'native role')
         _require('/' not in name and '\\' not in name and name != 'deployment-evidence',
                  'native role')
-    files = {name: _file(value) for name, value in native_files.items()}
+    _require(type(runtime) is dict and 'native_runtime_artifacts' not in runtime,
+             'runtime platform declaration')
+    missing = {name: Path(value) for name, value in native_files.items()
+               if not Path(value).exists()}
+    _require(not (missing.keys() & (_ROOTS | {'bootstrap', 'loader'})),
+             'required standalone native artifact missing')
+    for path in missing.values():
+        _require(path.is_absolute() and str(path).startswith(('/usr/lib/', '/System/Library/')),
+                 'missing non-system native artifact')
+    cache_evidence, cache_artifacts, cache_dependencies = None, {}, {}
+    if missing:
+        from ._shared_cache import collect as collect_cache
+        cache_evidence, cache_artifacts, cache_dependencies = collect_cache(
+            [str(path) for path in missing.values()], runtime.get('architecture'))
+    files = {name: missing[name] if name in missing else _file(value)
+             for name, value in native_files.items()}
+    for path in sorted(cache_artifacts):
+        if Path(path) not in files.values():
+            role = 'shared-cache-image-' + sha256(path.encode('utf-8')).hexdigest()
+            _require(role not in files, 'shared cache role collision')
+            files[role] = Path(path)
     # Bootstrap is compiled into launcher; that sole alias is intentional.
     _require(files['bootstrap'] == files['launcher'], 'embedded bootstrap binding')
     inverse = {}
@@ -222,8 +246,6 @@ def collect(build, build_files, native_files, module_paths, runtime):
     for name in ('imaging', 'imagingft'):
         _require(files[name] == _file(build_files[name]), 'controlled Pillow binding')
     _require('freetype-static' in build_files, 'static FreeType evidence')
-    _require(type(runtime) is dict and 'native_runtime_artifacts' not in runtime,
-             'runtime platform declaration')
     # Validate metadata before walking dependency closure.
     _runtime_manifest_id(dict(runtime, native_runtime_artifacts=[['check', '0' * 64]]))
     _require(runtime['os'] == 'Darwin' and runtime['byteorder'] == 'little'
@@ -248,7 +270,9 @@ def collect(build, build_files, native_files, module_paths, runtime):
         name = pending.pop()
         if name in graph:
             continue
-        dependencies = _dependencies(files[name], runtime['architecture'])
+        dependencies = (cache_dependencies[str(files[name])]
+                        if str(files[name]) in cache_dependencies else
+                        _dependencies(files[name], runtime['architecture']))
         _require(all(path in inverse for path in dependencies), 'missing native dependency')
         roles = sorted(inverse[path] for path in dependencies)
         graph[name] = roles
@@ -272,13 +296,16 @@ def collect(build, build_files, native_files, module_paths, runtime):
     for name in ('imaging', 'imagingft'):
         _require(any(files[name].is_relative_to(root) for root in roots),
                  'Pillow outside verified search paths')
-    records = sorted([name, _hash(path)] for name, path in files.items())
+    records = sorted([name, cache_artifacts[str(path)] if str(path) in cache_artifacts
+                      else _hash(path)] for name, path in files.items())
     deployment = {'kind': 'pillow-basic-deployment-evidence-v1',
                   'build_evidence_sha256': build_identity,
                   'native_artifacts': records,
                   'native_dependencies': sorted([name, roles] for name, roles in graph.items()),
                   'module_search_paths': trees,
                   'bootstrap_container': 'launcher'}
+    if cache_evidence is not None:
+        deployment['shared_cache'] = cache_evidence
     identity = sha256(canonical_bytes(deployment)).hexdigest()
     manifest = dict(runtime, native_runtime_artifacts=sorted(
         records + [['deployment-evidence', identity]]))
