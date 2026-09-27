@@ -19,7 +19,7 @@ class LaunchPolicyTests(unittest.TestCase):
         self.expected = f.collect()
         self.args = (self.expected, f.build, f.build_files, f.native,
                      [str(f.modules)], f.runtime)
-        self.signatures = patch.object(p, '_signature', return_value={'status': 'invalid-or-unsigned'})
+        self.signatures = patch.object(p, '_signature', return_value={'status': 'valid', 'file_sha256': sha256(f.native['launcher'].read_bytes()).hexdigest(), 'metadata': {'Signature': 'adhoc'}})
         self.signatures.start()
         self.addCleanup(self.signatures.stop)
 
@@ -48,10 +48,9 @@ class LaunchPolicyTests(unittest.TestCase):
         self.assertEqual(result['deployment']['build_configuration_sha256'],
                          sha256(canonical_bytes(result['build_configuration'])).hexdigest())
 
-    def test_unsigned_writable_deployment_records_gaps_not_success(self):
+    def test_signed_writable_deployment_records_gaps_not_success(self):
         document = p.collect(*self.args)['deployment']
         self.assertEqual(document['qualification'], 'not-established')
-        self.assertIn('launcher-signature-invalid-or-unavailable', document['protection_gaps'])
         self.assertIn('writable-artifact-or-resolution-filesystem', document['protection_gaps'])
         self.assertIn('fresh-exec-loader-state-not-observed', document['protection_gaps'])
         roles = document['artifact_protection_observations']
@@ -61,10 +60,24 @@ class LaunchPolicyTests(unittest.TestCase):
         self.assertTrue(any(role.startswith('module:0:') for role in roles))
 
     def test_valid_signature_is_not_preload_or_substitution_proof(self):
-        with patch.object(p, '_signature', return_value={'status': 'valid'}):
-            gaps = p.collect(*self.args)['deployment']['protection_gaps']
+        gaps = p.collect(*self.args)['deployment']['protection_gaps']
         self.assertIn('preload-prevention-before-entry-not-established', gaps)
         self.assertIn('substitution-prevention-through-last-use-not-established', gaps)
+
+    def test_signature_digest_and_metadata_are_bound(self):
+        result = p.collect(*self.args)
+        for key, value in (('file_sha256', '0' * 64), ('metadata', {})):
+            altered = deepcopy(result)
+            altered['deployment']['launcher_signature'][key] = value
+            with self.assertRaises(ValueError):
+                p.verify(altered, *self.args)
+        with patch.object(p, '_signature', return_value={
+                'status': 'valid', 'file_sha256': '0' * 64}):
+            with self.assertRaises(ValueError):
+                p.collect(*self.args)
+        with patch.object(p, '_signature', return_value={'status': 'invalid-or-unsigned'}):
+            with self.assertRaises(ValueError):
+                p.collect(*self.args)
 
     def test_policy_order_environment_or_success_tampering_rejects(self):
         result = p.collect(*self.args)

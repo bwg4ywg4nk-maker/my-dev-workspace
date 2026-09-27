@@ -106,14 +106,43 @@ def _path_observation(path):
 
 
 def _signature(path):
-    """Record verification outcome, not a caller-provided signature assertion."""
-    if not Path('/usr/bin/codesign').is_file():
-        return {'status': 'unavailable'}
-    result = subprocess.run(
-        ['/usr/bin/codesign', '--verify', '--strict', '--all-architectures', str(path)],
-        capture_output=True, timeout=30, env={})
-    # Do not include diagnostics: they contain deployment paths and can vary.
-    return {'status': 'valid' if result.returncode == 0 else 'invalid-or-unsigned'}
+    """Verify the local thin-image ad-hoc model and bind stable metadata.
+
+    The full file digest is the identity anchor; ad-hoc signing supplies no
+    signer authentication. Expected evidence must be retained independently.
+    """
+    before = _observation(path)
+    stamp = _stamp(Path(path).lstat())
+
+    def codesign(*options):
+        try:
+            result = subprocess.run(
+                ['/usr/bin/codesign', *options, str(path)],
+                capture_output=True, timeout=30, env={}, text=True)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ValueError('launcher signature verification unavailable') from exc
+        _require(result.returncode == 0, 'launcher signature invalid or unsigned')
+        return result.stdout + result.stderr
+
+    codesign('--verify', '--strict', '--all-architectures')
+    output = codesign('--display', '--verbose=4', '-r-')
+    fields = {}
+    for prefix in ('Identifier=', 'Format=', 'CodeDirectory ', 'Hash type=',
+                   'CDHash=', 'Signature=', 'TeamIdentifier=', '# designated => '):
+        matches = [line[len(prefix):] for line in output.splitlines()
+                   if line.startswith(prefix)]
+        _require(len(matches) == 1 and bool(matches[0]),
+                 'unsupported launcher signature metadata')
+        fields[prefix.rstrip('= ')] = matches[0]
+    _require(fields['Signature'] == 'adhoc' and
+             fields['Format'] in ('Mach-O thin (x86_64)', 'Mach-O thin (arm64)') and
+             fields['Hash type'] == 'sha256 size=32',
+             'unsupported launcher signing model')
+    codesign('--verify', '--strict', '--all-architectures')
+    _require(before == _observation(path) and stamp == _stamp(Path(path).lstat()),
+             'launcher changed during signature verification')
+    return {'status': 'valid', 'model': 'ad-hoc-sha256-pinned-v1',
+            'file_sha256': before['sha256'], 'metadata': fields}
 
 
 def collect(expected, build, build_files, native_files, module_paths, runtime):
@@ -146,6 +175,9 @@ def collect(expected, build, build_files, native_files, module_paths, runtime):
             _require(record['file']['sha256'] == digest, 'module byte binding')
             paths['module:' + str(index) + ':' + relative] = record
     signature = _signature(native_files['launcher'])
+    _require(signature['status'] == 'valid' and
+             signature['file_sha256'] == records['launcher'],
+             'launcher signature byte binding')
     for role, location in sorted(native_files.items()):
         if 'native:' + role in paths:
             _require(_path_observation(location) == paths['native:' + role],
@@ -164,8 +196,6 @@ def collect(expected, build, build_files, native_files, module_paths, runtime):
         'preload-prevention-before-entry-not-established',
         'fresh-exec-loader-state-not-observed',
     ]
-    if signature['status'] != 'valid':
-        gaps.append('launcher-signature-invalid-or-unavailable')
     if any(not node['read_only_filesystem'] for record in paths.values()
            for node in [record['file'], *record['ancestors']]):
         gaps.append('writable-artifact-or-resolution-filesystem')
