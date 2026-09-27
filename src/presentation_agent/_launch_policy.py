@@ -6,6 +6,8 @@ The launcher must enforce the policy in a fresh exec in a later phase.
 """
 from hashlib import sha256
 import os
+import plistlib
+import re
 from pathlib import Path
 import stat
 import subprocess
@@ -210,6 +212,22 @@ def _signature(path):
              fields['Format'] in ('Mach-O thin (x86_64)', 'Mach-O thin (arm64)') and
              fields['Hash type'] == 'sha256 size=32',
              'unsupported launcher signing model')
+    flags = re.search(r'(?:^| )flags=0x([0-9a-fA-F]+)(?:\(| |$)',
+                      fields['CodeDirectory'])
+    _require(flags is not None and int(flags[1], 16) & 0x10000,
+             'launcher hardened runtime missing')
+    # Reject all entitlements, including false-valued exceptions. The local
+    # ad-hoc model needs none, and unknown future exceptions must fail closed.
+    result = subprocess.run(
+        ['/usr/bin/codesign', '--display', '--entitlements', '-', str(path)],
+        capture_output=True, timeout=30, env={})
+    _require(result.returncode == 0, 'launcher entitlements unavailable')
+    if result.stdout:
+        try:
+            entitlements = plistlib.loads(result.stdout)
+        except (ValueError, plistlib.InvalidFileException) as exc:
+            raise ValueError('unsupported launcher entitlements') from exc
+        _require(entitlements == {}, 'launcher entitlements prohibited')
     codesign('--verify', '--strict', '--all-architectures')
     _require(before == _observation(path) and stamp == _stamp(Path(path).lstat()),
              'launcher changed during signature verification')

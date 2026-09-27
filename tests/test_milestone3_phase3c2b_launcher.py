@@ -12,21 +12,34 @@ SOURCE = ROOT / 'tools/restricted_launcher/launcher.c'
 
 HARNESS = r'''
 #include <assert.h>
-static int loads, stage, fail;
+static int loads, stage, fail, mutate, change_pid, loader_calls;
+static int fake_loader_state(const struct pa_startup_binding *binding,
+                             const struct pa_process_identity *identity) {
+    (void)binding; (void)identity; ++loader_calls;
+    if (mutate == 5 || (mutate == 6 && loader_calls == 2)) {
+        if (change_pid) ++pid_offset; else ++hash_byte;
+    }
+    return fail != 5;
+}
 static void *fake_load(const char *path, int flags) {
     assert(stage == 4 && !strcmp(path, "/exact/Python"));
     assert(flags == (RTLD_NOW | RTLD_LOCAL));
     ++loads; return (void *)&loads;
 }
-static int step(int n) { assert(++stage == n); return fail != n; }
+static int step(int n) {
+    assert(++stage == n);
+    if (mutate == n) { if (change_pid) ++pid_offset; else ++hash_byte; }
+    return fail != n;
+}
 static int launcher(void) { return step(1); }
 static int framework(const char *p) { assert(!strcmp(p, "/exact/Python")); return step(2); }
 static int build(void) { return step(3); }
 static int runtime(void) { return step(4); }
 int main(int argc, char **argv) {
     const struct pa_pair allow[] = {{"HOME", "/fixed"}, {"EMPTY", ""}};
-    const struct pa_checks checks = {launcher, framework, build, runtime};
+    const struct pa_checks checks = {launcher, framework, build, runtime, NULL};
     char *good[] = {"HOME=/fixed", "EMPTY="};
+    (void)&require_loader_state; /* Keep the real closed boundary compiled. */
     assert(argc == 2);
     if (!strcmp(argv[1], "environment")) {
         char *bad[] = {"FREETYPE_PROPERTIES=", "fReEtYpE_x=1", "Ft2_X=",
@@ -40,6 +53,16 @@ int main(int argc, char **argv) {
         good[1] = good[0]; assert(!admit(good, 2, allow, 2));
         { const struct pa_pair forbidden[] = {{"ft2_X", ""}};
           char *e[] = {"ft2_X="}; assert(!admit(e, 1, forbidden, 1)); }
+        { const char *names[] = {"DYLD_INSERT_LIBRARIES", "dyld_library_path",
+                                 "LD_PRELOAD", "__XPC_DYLD_FRAMEWORK_PATH"};
+          size_t k;
+          for (k = 0; k < sizeof(names)/sizeof(*names); ++k) {
+              char entry[128]; char *entries[] = {entry};
+              const struct pa_pair override[] = {{names[k], ""}};
+              snprintf(entry, sizeof(entry), "%s=", names[k]);
+              assert(!admit(entries, 1, override, 1));
+          }
+        }
         assert(!admit(NULL, PA_MAX_ENV + 1, NULL, 0));
     } else if (!strcmp(argv[1], "original")) {
         char buf[256] = {0}, *env[PA_MAX_ENV];
@@ -89,6 +112,9 @@ int main(int argc, char **argv) {
             assert(!verified_load(good, 2, allow, 2, "/exact/Python", &checks));
             assert(stage == i && loads == 0);
         }
+        stage = 0; fail = 5;
+        assert(!verified_load(good, 2, allow, 2, "/exact/Python", &checks));
+        assert(stage == 0 && loads == 0);
         stage = 0; fail = 0;
         assert(!verified_load(good, 2, allow, 2, "Python", &checks));
         assert(!verified_load(good, 2, allow, 2, "/exact/Python", NULL));
@@ -96,6 +122,22 @@ int main(int argc, char **argv) {
         assert(stage == 0 && loads == 0);
         assert(verified_load(good, 2, allow, 2, "/exact/Python", &checks));
         assert(loads == 1);
+    } else if (!strcmp(argv[1], "entry")) {
+        runtime_failure = 1;
+        assert(production_main() == 78);
+        assert(status_calls > 0 && loader_calls == 0 && loads == 0);
+        runtime_failure = 0; status_calls = 0;
+        assert(production_main() == 78);
+        assert(status_calls > 0 && loader_calls == 1 && loads == 0);
+    } else if (!strcmp(argv[1], "identity")) {
+        int n, kind;
+        for (kind = 0; kind < 2; ++kind) for (n = 1; n <= 6; ++n) {
+            stage = 0; loader_calls = 0; pid_offset = 0; hash_byte = 1;
+            mutate = n; change_pid = kind;
+            assert(!verified_load(good, 2, allow, 2, "/exact/Python", &checks));
+            assert(loads == 0);
+            assert(stage == (n <= 4 ? n : n == 5 ? 0 : 4));
+        }
     } else return 1;
     return 0;
 }
@@ -113,14 +155,30 @@ class LauncherTests(unittest.TestCase):
         cls.launcher = cls.work / 'launcher'
         cls.harness = cls.work / 'harness'
         source = cls.work / 'harness.c'
+        instrumented = cls.work / 'launcher.c'
+        instrumented.write_text(SOURCE.read_text().replace(
+            '#include \"loader_state.c\"',
+            '#include \"loader_state.c\"\n'
+            'static int fake_loader_state(const struct pa_startup_binding *, const struct pa_process_identity *);\n'
+            '#define require_loader_state fake_loader_state'))
         source.write_text(
             '#include <dlfcn.h>\n#include <string.h>\n'
+            '#include <unistd.h>\n#include <stdint.h>\n'
+            'static int pid_offset, hash_byte = 1, runtime_failure, status_calls;\n'
+            'static pid_t fake_pid(void) { return getpid() + pid_offset; }\n'
+            'static int fake_csops(pid_t p, unsigned int op, void *out, size_t size) {\n'
+            ' (void)p; memset(out, 0, size);\n'
+            ' if (op == 0) { ++status_calls; if (runtime_failure) return -1;\n'
+            ' *(uint32_t *)out = 0x22013301u; }\n'
+            ' if (op == 5) memset(out, hash_byte, size); return 0; }\n'
+            '#define getpid fake_pid\n#define csops fake_csops\n'
             'static void *fake_load(const char *, int);\n'
             '#define dlopen fake_load\n#define main production_main\n'
-            f'#include "{SOURCE}"\n#undef main\n#undef dlopen\n' + HARNESS)
+            f'#include "{instrumented}"\n#undef main\n#undef dlopen\n#undef require_loader_state\n' + HARNESS)
         for src, output in ((SOURCE, cls.launcher), (source, cls.harness)):
             subprocess.run(['clang', '-std=c11', '-Wall', '-Wextra', '-Werror',
-                            '-I' + sysconfig.get_path('include'), str(src), '-o', str(output)], check=True, capture_output=True)
+                            '-I' + sysconfig.get_path('include'), '-I' + str(SOURCE.parent),
+                            str(src), '-o', str(output)], check=True, capture_output=True)
 
     def test_exact_environment_admission(self):
         subprocess.run([str(self.harness), 'environment'], check=True)
@@ -137,6 +195,12 @@ class LauncherTests(unittest.TestCase):
     def test_kernel_record_survives_current_environment_sanitization(self):
         subprocess.run([str(self.harness), 'live-original'],
                        env={'fT2_X': ''}, check=True)
+
+    def test_entry_always_checks_hardened_runtime_and_remains_closed(self):
+        subprocess.run([str(self.harness), 'entry'], check=True)
+
+    def test_identity_changes_at_every_preload_step_reject(self):
+        subprocess.run([str(self.harness), 'identity'], check=True)
 
     def test_production_entry_remains_closed(self):
         for env in ({}, {'fReEtYpE_PROPERTIES': ''}, {'FT2_X': '1'}):

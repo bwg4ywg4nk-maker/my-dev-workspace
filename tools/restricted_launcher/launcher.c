@@ -17,11 +17,13 @@ struct pa_pair { const char *name, *value; };
  * Each verifier must bind actual artifacts to immutable deployment evidence.
  * Framework verification includes the exact absolute path, byte identity,
  * dependencies and protection against substitution before dlopen. */
+struct pa_startup_binding;
 struct pa_checks {
     int (*launcher)(void);
     int (*framework)(const char *);
     int (*build_evidence)(void);
     int (*runtime_artifacts)(void);
+    const struct pa_startup_binding *startup;
 };
 
 static unsigned char upper(unsigned char c) {
@@ -43,7 +45,9 @@ static int admit(char *const *env, size_t count,
         int matched = 0;
         if (!env[i] || !(eq = strchr(env[i], '=')) || eq == env[i]) return 0;
         n = (size_t)(eq - env[i]);
-        if (prefix(env[i], n, "FREETYPE_") || prefix(env[i], n, "FT2_")) return 0;
+        if (prefix(env[i], n, "FREETYPE_") || prefix(env[i], n, "FT2_") ||
+            prefix(env[i], n, "DYLD_") || prefix(env[i], n, "LD_") ||
+            prefix(env[i], n, "__XPC_DYLD_")) return 0;
         for (j = 0; j < n; ++j) {
             unsigned char c = (unsigned char)env[i][j];
             if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
@@ -91,14 +95,24 @@ static int original_record(char *buf, size_t size, char **env, size_t *count) {
     return 1;
 }
 
+#include "loader_state.c"
+
 static void *verified_load(char *const *env, size_t count,
                            const struct pa_pair *allow, size_t allowed,
                            const char *path, const struct pa_checks *checks) {
+    struct pa_process_identity identity;
+    if (!pin_process_identity(&identity) ||
+        !require_loader_state(checks ? checks->startup : NULL, &identity) ||
+        !process_identity_matches(&identity)) return NULL;
     if (!admit(env, count, allow, allowed) || !path || path[0] != '/' ||
         !checks || !checks->launcher || !checks->framework ||
         !checks->build_evidence || !checks->runtime_artifacts) return NULL;
-    if (!checks->launcher() || !checks->framework(path) ||
-        !checks->build_evidence() || !checks->runtime_artifacts()) return NULL;
+    if (!checks->launcher() || !process_identity_matches(&identity) ||
+        !checks->framework(path) || !process_identity_matches(&identity) ||
+        !checks->build_evidence() || !process_identity_matches(&identity) ||
+        !checks->runtime_artifacts() || !process_identity_matches(&identity) ||
+        !require_loader_state(checks->startup, &identity) ||
+        !process_identity_matches(&identity)) return NULL;
     return dlopen(path, RTLD_NOW | RTLD_LOCAL);
 }
 
@@ -107,14 +121,16 @@ static void *verified_load(char *const *env, size_t count,
 int main(void) {
 #ifdef __APPLE__
     int mib[] = {CTL_KERN, KERN_PROCARGS2, (int)getpid()};
-    size_t size = PA_MAX_BYTES, count = 0;
+    size_t size = PA_MAX_BYTES, count = PA_MAX_ENV + 1;
     char *buf = malloc(size), *env[PA_MAX_ENV];
     /* No deployment verifier or framework is authorized in Phase 2. */
-    const struct pa_checks closed = {NULL, NULL, NULL, NULL};
+    const struct pa_checks closed = {0};
     void *handle = NULL;
-    if (buf && sysctl(mib, 3, buf, &size, NULL, 0) == 0 &&
-        original_record(buf, size, env, &count))
-        handle = verified_load(env, count, NULL, 0, NULL, &closed);
+    if (!buf || sysctl(mib, 3, buf, &size, NULL, 0) != 0 ||
+        !original_record(buf, size, env, &count)) count = PA_MAX_ENV + 1;
+    /* Always enter native verification, even with no authorized deployment.
+     * Missing inventory denies here; it never authorizes provider loading. */
+    handle = verified_load(env, count, NULL, 0, NULL, &closed);
     free(buf);
     if (handle) {
         /* No verified deployment search paths are authorized yet. */

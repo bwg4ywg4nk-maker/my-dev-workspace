@@ -28,7 +28,7 @@ class SigningTests(unittest.TestCase):
 
     def sign(self, path=None, identifier='org.professionalpresentationagent.launcher'):
         subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-',
-                        '--identifier', identifier, '--timestamp=none',
+                        '--options', 'runtime', '--identifier', identifier, '--timestamp=none',
                         str(path or self.launcher)], check=True, capture_output=True)
 
     def test_unsigned_and_invalid_reject(self):

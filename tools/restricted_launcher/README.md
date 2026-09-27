@@ -42,7 +42,7 @@ until process exit; a live interpreter's framework must not be unloaded.
 Checks cover this controlled bootstrap boundary, not arbitrary hostile Python,
 transient mutations restored before a check, or future provider state. No provider
 is active and no Python-side environment mapping is used by this bootstrap.
-Concrete deployment verifiers, loader hardening, provider qualification/binding,
+Concrete deployment verifiers, provider qualification/binding,
 and pass-11 integration remain deferred and fail closed.
 
 Tests compile a separate native harness with a fake loader to check sequencing
@@ -60,3 +60,34 @@ mechanics, not deployment provenance or qualification:
 ```sh
 PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -p 'test_milestone3_phase3c2b_bootstrap.py'
 ```
+
+The loader-state boundary now rejects `DYLD_`, `LD_`, and `__XPC_DYLD_`
+variables (ASCII case insensitive), including when explicitly allowlisted.
+Before artifact callbacks or Python loading, native observations bind the PID,
+initial/current image counts, image paths/addresses, dyld path/address, and active
+shared-cache UUID/base/slide. Unsupported, detached, translated, malformed, or
+changing observations reject. These observations do not replace existing byte,
+launcher, deployment, substitution, or whole-shared-cache checks.
+
+The signing preparation tool uses `--options runtime` without entitlements.
+Hardened Runtime supplies pre-entry protection against loader injection, with
+library validation enabled. The actual launcher entry always reaches native
+runtime verification, including when deployment inputs or environment records
+are unavailable. It requires valid, enforced signing and Hardened Runtime,
+rejects debugging/exception states and all entitlements, and pins PID/CDHash
+once for the complete pre-load boundary. Every artifact callback, loader snapshot,
+and startup-inventory check must preserve that identity.
+
+Startup inventory verification exists: the offline collector reverifies deployment
+and launcher evidence and emits a deployment/CDHash-bound binary inventory. Native
+verification checks its independently trusted pins, exact image closure, standalone
+bytes, and immutable shared-cache mappings. Missing evidence or any mismatch denies.
+Production supplies no trusted inventory binding or artifact verifiers, so provider
+loading and qualification still remain denied, even after runtime checks succeed.
+
+This does not establish deployment trust/provenance or a trusted fresh-exec handoff.
+The deployment owner must authenticate and protect inventory/deployment pins;
+concrete deployment adapters, substitution protection, and supported deployment
+constraints remain unresolved. A fork before the initial identity pin is not
+attested by these checks. Offline launch-policy gaps remain unchanged. Test-only
+harness substitutions never authorize production execution or qualification.

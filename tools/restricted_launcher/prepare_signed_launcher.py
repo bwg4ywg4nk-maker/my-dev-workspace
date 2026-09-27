@@ -10,6 +10,7 @@ import subprocess
 
 from presentation_agent import _deployment_evidence as deployment
 from presentation_agent import _launch_policy as policy
+from presentation_agent import _startup_inventory as startup
 from presentation_agent.evidence import canonical_bytes
 
 
@@ -28,7 +29,7 @@ def main():
     launcher = output / 'launcher'
     shutil.copyfile(inputs['native_files']['launcher'], launcher)
     launcher.chmod(0o755)
-    subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', '--identifier',
+    subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', '--options', 'runtime', '--identifier',
                     'org.professionalpresentationagent.launcher', '--timestamp=none',
                     str(launcher)], check=True, capture_output=True, env={})
     policy._signature(launcher)
@@ -43,6 +44,8 @@ def main():
     evidence = policy.collect(expected, *parameters)
     print('Recollecting to verify retained identity', flush=True)
     policy.verify(evidence, expected, *parameters)
+    inventory = startup.collect(expected, *parameters)
+    (output / 'startup-inventory.bin').write_bytes(inventory)
     for name, value in (('inputs.json', inputs),
                         ('deployment-evidence.json', expected),
                         ('launch-policy-evidence.json', evidence)):
