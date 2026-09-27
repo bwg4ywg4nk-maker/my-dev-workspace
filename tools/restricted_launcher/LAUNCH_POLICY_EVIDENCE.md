@@ -37,7 +37,7 @@ pre-entry native injection, or target loader changes. A valid signature alone
 does not prove a trusted signer, hardened runtime, safe entitlements, or library
 validation. Explicit protection gaps remain in the evidence; there is no success
 flag or qualification token, and no policy evidence opens the provider gate.
-Writable deployments remain unsupported for activation, even when signed.
+Writable deployments now reject during policy collection, even when signed.
 
 Generate and independently recollect one evidence set without provider startup:
 
@@ -102,3 +102,39 @@ an external trust anchor. Path-based codesign invocations and observation checks
 do not rule out adversarial transient replacement or replacement after checks.
 Full substitution protection, preload prevention, and fresh-exec enforcement
 remain unestablished; Phase 4.5B and Phase 5 are not implemented here.
+
+
+## Deployment substitution rejection (Milestone 3C.2b)
+
+The minimum offline prerequisite is a read-only filesystem for every standalone
+native artifact (including launcher/bootstrap), every module file, every module
+directory (including empty directories), and every ancestor up to the root.
+The collector checks this before byte/signature verification and repeats the
+complete check afterward. Local inode/stat snapshots detect replacement even
+when bytes and permissions are identical; snapshots do not enter deterministic
+evidence identities. Directory snapshots bind device/inode, type/mode,
+owner/group and filesystem flags, with read-only mount state checked separately;
+they exclude size/mtime/ctime so unrelated sibling entries cannot invalidate
+ancestor identity. File snapshots retain full metadata and byte checks. Module
+inventories and the complete resolution path set still detect relevant entries
+being added, removed or replaced. Symlinks, missing paths, writable filesystems, and
+unavailable filesystem observations fail closed. Mode bits, ownership, ACLs,
+immutable flags and signatures cannot waive the read-only requirement.
+Cache-only native paths are currently unsupported by this protection check:
+existing shared-cache byte/runtime checks remain intact, but they do not prove
+protection of backing files or absent install-name resolution.
+
+`collect` and `verify` remain offline evidence operations. Their distinct
+`substitution_protection` record explicitly leaves `through_last_use`
+unestablished. Read-only mount observations cannot prove that mounts or backing
+stores will remain unchanged, including by privileged actors. The conservative
+`require_substitution_protection` boundary repeats collection and always rejects
+until a supported lifetime enforcement mechanism exists. It accepts no caller
+success flag and returns no authorization or qualification token. Existing
+launcher denial remains in place; this boundary is not wired into activation.
+
+This change does not provision mounts, alter permissions, establish an external
+trust anchor, inspect target loader state, or begin Phase 4.5B/Phase 5. The earlier
+collection commands now reject ordinary writable build/workspace deployments;
+a signed copy alone is insufficient. Focused tests use synthetic mount
+observations and do not claim a protected local deployment.

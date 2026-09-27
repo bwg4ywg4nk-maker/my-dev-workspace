@@ -54,7 +54,17 @@ def _identity(value):
     return sha256(canonical_bytes(value)).hexdigest()
 
 
+def _directory_stamp(info):
+    # Directory size/timestamps describe all entries, including unrelated
+    # siblings. Bind path identity and protection instead; module inventories
+    # and the resolution snapshot's path set separately bind relevant entries.
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid,
+            getattr(info, 'st_flags', 0))
+
+
 def _stamp(info):
+    if stat.S_ISDIR(info.st_mode):
+        return _directory_stamp(info)
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns,
             info.st_ctime_ns, info.st_mode, info.st_uid, info.st_gid,
             getattr(info, 'st_flags', 0))
@@ -103,6 +113,68 @@ def _path_observation(path):
         # Root first; no absolute deployment locations enter identity.
         'ancestors': [_observation(p, True) for p in reversed(path.parents)],
     }
+
+
+def _resolution_protection(native_files, module_paths):
+    """Require read-only filesystems for the complete resolution namespace.
+
+    This is a necessary offline condition, not a mount-lifetime guarantee.
+    Modes, ownership, ACLs and immutable flags cannot establish this condition:
+    writers may already hold descriptors or be able to replace an ancestor.
+    Missing cache-backed paths are unsupported here until their backing files
+    and absent-path resolution can receive equivalent protection evidence.
+    """
+    observations = {}
+
+    def check(path, directory):
+        path = Path(path)
+        for ancestor in reversed(path.parents):
+            observe(ancestor, True)
+        observe(path, directory)
+
+    def observe(path, directory):
+        if path in observations:
+            return
+        info = path.lstat()
+        _require((stat.S_ISDIR if directory else stat.S_ISREG)(info.st_mode),
+                 'protected artifact type')
+        before = _stamp(info)
+        record = _observation(path, directory)
+        _require(before == _stamp(path.lstat()),
+                 'deployment path changed during protection check')
+        _require(record['read_only_filesystem'],
+                 'writable or substitutable deployment path')
+        observations[path] = (before, record)
+
+    for location in native_files.values():
+        check(location, False)
+    for location in module_paths:
+        root = Path(location)
+        check(root, True)
+        # Walk only after the parent is checked. Include empty directories:
+        # they can host a new package, extension or bytecode cache later.
+        pending = [root]
+        while pending:
+            directory = pending.pop()
+            for child in sorted(directory.iterdir()):
+                _require(not child.is_symlink(), 'substitutable module symlink')
+                is_directory = child.is_dir()
+                check(child, is_directory)
+                if is_directory:
+                    pending.append(child)
+    return observations
+
+
+def require_substitution_protection(*args):
+    """Fail closed at a prospective use boundary; never a qualification token.
+
+    Recollect all byte/signature/path evidence. Even read-only observations
+    cannot demonstrate that mounts and their backing stores remain protected
+    through last use. No supported lifetime enforcement exists in this phase.
+    Caller-supplied assertions or previously collected evidence cannot waive it.
+    """
+    collect(*args)
+    raise ValueError('substitution protection through last use not established')
 
 
 def _signature(path):
@@ -154,6 +226,7 @@ def collect(expected, build, build_files, native_files, module_paths, runtime):
     deployment document binds the *entire* verified deployment evidence.
     Expected evidence still needs a deployment-owner trust anchor.
     """
+    protection = _resolution_protection(native_files, module_paths)
     deployment.verify(expected, build, build_files, native_files, module_paths, runtime)
     original = expected['deployment']
     records = dict(original['native_artifacts'])
@@ -188,6 +261,8 @@ def collect(expected, build, build_files, native_files, module_paths, runtime):
             _require(_path_observation(Path(root) / relative) ==
                      paths['module:' + str(index) + ':' + relative],
                      'module protection observation changed')
+    _require(protection == _resolution_protection(native_files, module_paths),
+             'deployment resolution protection changed')
     # Signature validity alone does not establish hardened runtime, entitlements,
     # library validation, original loader state, or a trusted signing authority.
     gaps = [
@@ -196,9 +271,6 @@ def collect(expected, build, build_files, native_files, module_paths, runtime):
         'preload-prevention-before-entry-not-established',
         'fresh-exec-loader-state-not-observed',
     ]
-    if any(not node['read_only_filesystem'] for record in paths.values()
-           for node in [record['file'], *record['ancestors']]):
-        gaps.append('writable-artifact-or-resolution-filesystem')
     configuration = {
         'kind': 'protected-launch-build-configuration-v1',
         'phase1_configuration_sha256': build['configuration_sha256'],
@@ -212,6 +284,11 @@ def collect(expected, build, build_files, native_files, module_paths, runtime):
         'deployment_evidence_sha256': _identity(expected),
         'runtime_id': expected['runtime_id'],
         'artifact_protection_observations': paths,
+        'substitution_protection': {
+            'minimum': 'read-only-artifacts-and-complete-resolution-namespace',
+            'observation': 'before-and-after-byte-and-signature-verification',
+            'through_last_use': 'not-established',
+        },
         'launcher_signature': signature,
         'loader_binding': {
             'native_dependencies_sha256': _identity(original['native_dependencies']),

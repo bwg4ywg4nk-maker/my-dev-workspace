@@ -1,6 +1,8 @@
 """Phase 4.5A4 bindings and negative protection observations, no activation."""
 from copy import deepcopy
 from hashlib import sha256
+import os
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -19,6 +21,11 @@ class LaunchPolicyTests(unittest.TestCase):
         self.expected = f.collect()
         self.args = (self.expected, f.build, f.build_files, f.native,
                      [str(f.modules)], f.runtime)
+        # Synthetic read-only mount observations; no host protection claim.
+        self.mounts = patch.object(p.os, 'fstatvfs',
+                                   return_value=SimpleNamespace(f_flag=os.ST_RDONLY))
+        self.mounts.start()
+        self.addCleanup(self.mounts.stop)
         self.signatures = patch.object(p, '_signature', return_value={'status': 'valid', 'file_sha256': sha256(f.native['launcher'].read_bytes()).hexdigest(), 'metadata': {'Signature': 'adhoc'}})
         self.signatures.start()
         self.addCleanup(self.signatures.stop)
@@ -48,10 +55,13 @@ class LaunchPolicyTests(unittest.TestCase):
         self.assertEqual(result['deployment']['build_configuration_sha256'],
                          sha256(canonical_bytes(result['build_configuration'])).hexdigest())
 
-    def test_signed_writable_deployment_records_gaps_not_success(self):
+    def test_readonly_observations_are_not_lifetime_protection(self):
         document = p.collect(*self.args)['deployment']
         self.assertEqual(document['qualification'], 'not-established')
-        self.assertIn('writable-artifact-or-resolution-filesystem', document['protection_gaps'])
+        self.assertEqual(document['substitution_protection']['through_last_use'],
+                         'not-established')
+        with self.assertRaisesRegex(ValueError, 'through last use not established'):
+            p.require_substitution_protection(*self.args)
         self.assertIn('fresh-exec-loader-state-not-observed', document['protection_gaps'])
         roles = document['artifact_protection_observations']
         self.assertIn('native:launcher', roles)
@@ -114,6 +124,26 @@ class LaunchPolicyTests(unittest.TestCase):
         self.fixture.native['launcher'].chmod(0o400)
         with self.assertRaises(ValueError):
             p.verify(result, *self.args)
+
+    def test_namespace_change_during_signature_check_rejects(self):
+        # Introduce an empty directory: file hashes and tree records do not
+        # change, but future package/cache resolution could change there.
+        signature = p._signature.return_value
+        def change_namespace(*args):
+            (self.fixture.modules / 'new-empty-package').mkdir()
+            return signature
+        with patch.object(p, '_signature', side_effect=change_namespace):
+            with self.assertRaisesRegex(ValueError, 'resolution protection changed'):
+                p.collect(*self.args)
+
+    def test_mount_becomes_writable_during_verification_rejects(self):
+        signature = p._signature.return_value
+        def writable(*args):
+            p.os.fstatvfs.return_value = SimpleNamespace(f_flag=0)
+            return signature
+        with patch.object(p, '_signature', side_effect=writable):
+            with self.assertRaisesRegex(ValueError, 'native protection observation changed'):
+                p.collect(*self.args)
 
     def test_ordinary_provider_remains_closed(self):
         with self.assertRaises(ValueError):
