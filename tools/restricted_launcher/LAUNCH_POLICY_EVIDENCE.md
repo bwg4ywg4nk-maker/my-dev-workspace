@@ -106,6 +106,12 @@ remain unestablished; Phase 4.5B and Phase 5 are not implemented here.
 
 ## Deployment substitution rejection (Milestone 3C.2b)
 
+The ordinary offline collector retains the conservative rules below. The later
+[trusted-admin deployment-protection prerequisite](DEPLOYMENT_PROTECTION.md)
+adds a separately authenticated image profile and replaces the unconditional
+`require_substitution_protection` rejection for that profile only. Hostile
+root/admin is outside its explicit threat model; provider activation stays closed.
+
 The minimum offline prerequisite is a read-only filesystem for every standalone
 native artifact (including launcher/bootstrap), every module file, every module
 directory (including empty directories), and every ancestor up to the root.
@@ -127,11 +133,13 @@ protection of backing files or absent install-name resolution.
 `collect` and `verify` remain offline evidence operations. Their distinct
 `substitution_protection` record explicitly leaves `through_last_use`
 unestablished. Read-only mount observations cannot prove that mounts or backing
-stores will remain unchanged, including by privileged actors. The conservative
-`require_substitution_protection` boundary repeats collection and always rejects
-until a supported lifetime enforcement mechanism exists. It accepts no caller
-success flag and returns no authorization or qualification token. Existing
-launcher denial remains in place; this boundary is not wired into activation.
+stores will remain unchanged, including by privileged actors. Ordinary
+evidence alone cannot satisfy `require_substitution_protection`. The
+trusted-admin profile additionally authenticates independent pins and verifies
+the image, backing store, namespace and retained lifecycle at use boundaries.
+It accepts no caller success flag and returns no authorization or qualification
+token. Existing launcher denial remains in place; this boundary is not wired
+into activation.
 
 This change does not provision mounts, alter permissions, establish an external
 trust anchor, inspect target loader state, or begin Phase 4.5B/Phase 5. The earlier

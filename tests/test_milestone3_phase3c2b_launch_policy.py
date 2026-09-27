@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from presentation_agent import _launch_policy as p
+from presentation_agent import _deployment_protection as protection
 from presentation_agent import layout
 from presentation_agent.evidence import canonical_bytes
 import test_milestone3_phase3c2b_deployment as deployment_tests
@@ -60,8 +61,12 @@ class LaunchPolicyTests(unittest.TestCase):
         self.assertEqual(document['qualification'], 'not-established')
         self.assertEqual(document['substitution_protection']['through_last_use'],
                          'not-established')
-        with self.assertRaisesRegex(ValueError, 'through last use not established'):
-            p.require_substitution_protection(*self.args)
+        # Read-only observations still cannot replace independently installed
+        # administrator pins. Use an isolated prerequisite lifecycle for this test.
+        with patch.object(protection, '_lifecycle', protection._Lifecycle()), \
+                patch.object(protection, '_PIN_FILE', self.fixture.root / 'missing-pins'):
+            with self.assertRaises(FileNotFoundError):
+                p.require_substitution_protection(*self.args)
         self.assertIn('fresh-exec-loader-state-not-observed', document['protection_gaps'])
         roles = document['artifact_protection_observations']
         self.assertIn('native:launcher', roles)

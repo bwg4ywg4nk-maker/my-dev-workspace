@@ -168,15 +168,14 @@ def _resolution_protection(native_files, module_paths):
 
 
 def require_substitution_protection(*args):
-    """Fail closed at a prospective use boundary; never a qualification token.
+    """Verify the trusted-admin image prerequisite; return no qualification token.
 
-    Recollect all byte/signature/path evidence. Even read-only observations
-    cannot demonstrate that mounts and their backing stores remain protected
-    through last use. No supported lifetime enforcement exists in this phase.
-    Caller-supplied assertions or previously collected evidence cannot waive it.
+    The independently installed pin file is mandatory. Every call rechecks the
+    same process-lifetime deployment and permanently latches observed failures.
+    Native launcher/provider activation remains separate and closed.
     """
-    collect(*args)
-    raise ValueError('substitution protection through last use not established')
+    from ._deployment_protection import require
+    require(*args)
 
 
 def _signature(path):
@@ -244,8 +243,19 @@ def collect(expected, build, build_files, native_files, module_paths, runtime):
     deployment document binds the *entire* verified deployment evidence.
     Expected evidence still needs a deployment-owner trust anchor.
     """
-    protection = _resolution_protection(native_files, module_paths)
+    return _collect(expected, build, build_files, native_files, module_paths, runtime,
+                    resolution=_resolution_protection)
+
+
+def _collect(expected, build, build_files, native_files, module_paths, runtime,
+             *, resolution, checkpoint=None):
+    # The ordinary collector retains its conservative read-only ancestor policy.
+    # The prerequisite verifier supplies authenticated trusted-admin protection
+    # for ancestors outside the image, without weakening any byte checks.
+    protection = resolution(native_files, module_paths)
     deployment.verify(expected, build, build_files, native_files, module_paths, runtime)
+    if checkpoint is not None:
+        checkpoint()
     original = expected['deployment']
     records = dict(original['native_artifacts'])
     paths = {}
@@ -266,6 +276,8 @@ def collect(expected, build, build_files, native_files, module_paths, runtime):
             _require(record['file']['sha256'] == digest, 'module byte binding')
             paths['module:' + str(index) + ':' + relative] = record
     signature = _signature(native_files['launcher'])
+    if checkpoint is not None:
+        checkpoint()
     _require(signature['status'] == 'valid' and
              signature['file_sha256'] == records['launcher'],
              'launcher signature byte binding')
@@ -279,7 +291,7 @@ def collect(expected, build, build_files, native_files, module_paths, runtime):
             _require(_path_observation(Path(root) / relative) ==
                      paths['module:' + str(index) + ':' + relative],
                      'module protection observation changed')
-    _require(protection == _resolution_protection(native_files, module_paths),
+    _require(protection == resolution(native_files, module_paths),
              'deployment resolution protection changed')
     # Signature validity alone does not establish hardened runtime, entitlements,
     # library validation, original loader state, or a trusted signing authority.

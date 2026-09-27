@@ -50,7 +50,7 @@ class SubstitutionTests(unittest.TestCase):
         self.fixture.native['launcher'].chmod(0o444)
         with patch.object(p.os, 'fstatvfs', return_value=SimpleNamespace(f_flag=0)):
             with self.assertRaisesRegex(ValueError, 'writable or substitutable'):
-                p.require_substitution_protection(*self.args)
+                p.collect(*self.args)
 
     def test_missing_paths_symlinks_and_unavailable_mount_evidence_fail_closed(self):
         f = self.fixture
