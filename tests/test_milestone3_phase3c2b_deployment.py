@@ -25,6 +25,24 @@ def macho(dependencies=()):
                        len(body), 0, 0) + body
 
 
+def fat(payload, endian='>', wide=False):
+    """Two slices, with x86_64 second so selection cannot use the first image."""
+    magic = 0xCAFEBABF if wide else 0xCAFEBABE
+    fmt = endian + ('IIQQII' if wide else 'IIIII')
+    entries = []
+    for cpu, offset, size in ((0x100000C, 128, 32), (0x1000007, 256, len(payload))):
+        fields = [cpu, 0, offset, size, 0] + ([0] if wide else [])
+        entries.append(struct.pack(fmt, *fields))
+    result = bytearray(256 + len(payload))
+    table = struct.pack(endian + 'II', magic, 2) + b''.join(entries)
+    result[:len(table)] = table
+    arm = bytearray(macho())
+    struct.pack_into('<I', arm, 4, 0x100000C)
+    result[128:160] = arm
+    result[256:] = payload
+    return bytes(result)
+
+
 class DeploymentTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -76,6 +94,97 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(first['runtime_id'], d.verify(first, self.build,
                          self.build_files, self.native, [self.modules], self.runtime))
         self.assertNotIn(str(self.root), str(first))
+
+    def test_fat_formats_bind_whole_file_and_selected_slice(self):
+        path = self.native['launcher']
+        payload = path.read_bytes()
+        thin = self.collect()
+        self.assertNotIn('native_slices', thin['deployment'])
+        for endian in ('>', '<'):
+            for wide in (False, True):
+                with self.subTest(endian=endian, wide=wide):
+                    data = fat(payload, endian, wide)
+                    path.write_bytes(data)
+                    result = self.collect()
+                    self.assertEqual(thin['deployment']['native_dependencies'],
+                                     result['deployment']['native_dependencies'])
+                    records = dict(result['deployment']['native_artifacts'])
+                    self.assertEqual(records['launcher'], sha256(data).hexdigest())
+                    self.assertEqual(records['bootstrap'], records['launcher'])
+                    slices = dict(result['deployment']['native_slices'])
+                    self.assertEqual(slices['launcher'], dict(
+                        architecture='x86_64', cpu_subtype=0, offset=256,
+                        size=len(payload), sha256=sha256(payload).hexdigest()))
+                    self.assertEqual(slices['bootstrap'], slices['launcher'])
+                    self.assertEqual(result['runtime_id'], d.verify(
+                        result, self.build, self.build_files, self.native,
+                        [self.modules], self.runtime))
+                    # Changes outside the selected slice still invalidate evidence.
+                    changed = bytearray(data)
+                    changed[180] ^= 1
+                    path.write_bytes(changed)
+                    self.assertNotEqual(result['runtime_id'], self.collect()['runtime_id'])
+                    with self.assertRaisesRegex(ValueError, 'deployment evidence mismatch'):
+                        d.verify(result, self.build, self.build_files, self.native,
+                                 [self.modules], self.runtime)
+                    path.write_bytes(data)
+                    slices['launcher']['offset'] += 1
+                    with self.assertRaisesRegex(ValueError, 'deployment evidence mismatch'):
+                        d.verify(result, self.build, self.build_files, self.native,
+                                 [self.modules], self.runtime)
+
+    def test_malformed_fat_tables_and_slices_reject(self):
+        for endian in ('>', '<'):
+            for wide in (False, True):
+                entry_size = 32 if wide else 20
+                second = 8 + entry_size
+                integer = 'Q' if wide else 'I'
+                cases = [
+                    (4, 'I', 0, 'fat table bounds'),
+                    (4, 'I', 0xffffffff, 'fat table bounds'),
+                    (second, 'I', 0x100000C, 'missing or duplicate'),
+                    (8, 'I', 0x1000007, 'missing or duplicate'),
+                    (second + 8, integer, 128, 'overlapping'),
+                    (second + 8, integer, 0, 'fat slice bounds'),
+                    (second + 8, integer, 10000, 'fat slice bounds'),
+                    (second + (16 if wide else 12), integer, 10000, 'fat slice bounds'),
+                    (second + (16 if wide else 12), integer, 0, 'fat slice bounds'),
+                    (second + (24 if wide else 16), 'I', 64, 'alignment'),
+                    (second + (24 if wide else 16), 'I', 9, 'alignment'),
+                    (second + 4, 'I', 3, 'architecture mismatch'),
+                ]
+                if wide:
+                    cases.append((second + 28, 'I', 1, 'reserved'))
+                for offset, fmt, value, error in cases:
+                    with self.subTest(endian=endian, wide=wide, offset=offset, value=value):
+                        data = bytearray(fat(macho(), endian, wide))
+                        struct.pack_into(endian + fmt, data, offset, value)
+                        self.native['loader'].write_bytes(data)
+                        with self.assertRaisesRegex(ValueError, error):
+                            self.collect()
+                for offset, value in ((256, 0), (260, 0x100000C), (264, 3)):
+                    data = bytearray(fat(macho(), endian, wide))
+                    struct.pack_into('<I', data, offset, value)
+                    self.native['loader'].write_bytes(data)
+                    with self.assertRaisesRegex(ValueError, 'architecture mismatch'):
+                        self.collect()
+                for length in (4, 7, 8 + 2 * entry_size - 1, 270):
+                    self.native['loader'].write_bytes(fat(macho(), endian, wide)[:length])
+                    with self.assertRaises(ValueError):
+                        self.collect()
+
+    def test_fat_selected_load_commands_and_unbound_modules_reject(self):
+        path = self.native['loader']
+        for payload in (macho(['@rpath/untrusted']), macho(['/missing'])):
+            path.write_bytes(fat(payload))
+            with self.assertRaises(ValueError):
+                self.collect()
+        path.write_bytes(macho())
+        for wide in (False, True):
+            for endian in ('>', '<'):
+                (self.modules / 'unbound-native').write_bytes(fat(macho(), endian, wide))
+                with self.assertRaisesRegex(ValueError, 'unbound native module'):
+                    self.collect()
 
     def test_contradictory_platform_declarations_reject(self):
         for field, value in (('os', 'Linux'), ('byteorder', 'big'),

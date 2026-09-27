@@ -1,9 +1,10 @@
 """Offline deployment byte evidence; never trusted launch or qualification.
 
 Absolute locations are inputs only. Identities use logical roles and relative
-module names. Deliberately supports thin, little-endian 64-bit Mach-O with
-absolute dependency names only. Missing system images may bind to the active
-dyld shared cache through separately verified whole-cache evidence.
+module names. Supports thin little-endian 64-bit Mach-O and x86_64 slices of
+universal Mach-O, with absolute dependency names only. Missing system images
+may bind to the active dyld shared cache through separately verified whole-cache
+evidence.
 """
 from hashlib import sha256
 from importlib.machinery import (ExtensionFileLoader, FileFinder, SourceFileLoader,
@@ -145,9 +146,57 @@ def _hash(path):
     return digest.hexdigest()
 
 
+_FAT_FORMATS = {
+    b'\xca\xfe\xba\xbe': ('>', False),
+    b'\xbe\xba\xfe\xca': ('<', False),
+    b'\xca\xfe\xba\xbf': ('>', True),
+    b'\xbf\xba\xfe\xca': ('<', True),
+}
+
+
+def _native_slice(data, architecture):
+    """Validate the complete fat table before selecting exactly one x86_64 slice."""
+    if data[:4] not in _FAT_FORMATS:
+        return data, None
+    endian, wide = _FAT_FORMATS[data[:4]]
+    _require(len(data) >= 8, 'fat header')
+    count = struct.unpack_from(endian + 'I', data, 4)[0]
+    entry_size = 32 if wide else 20
+    _require(0 < count <= (len(data) - 8) // entry_size, 'fat table bounds')
+    table_end = 8 + count * entry_size
+    ranges, selected = [], []
+    for index in range(count):
+        entry = struct.unpack_from(endian + ('IIQQII' if wide else 'IIIII'),
+                                   data, 8 + index * entry_size)
+        cpu, subtype, offset, size, alignment = entry[:5]
+        _require(not wide or entry[5] == 0, 'fat reserved field')
+        _require(alignment < (64 if wide else 32)
+                 and offset % (1 << alignment) == 0, 'fat slice alignment')
+        _require(size > 0 and table_end <= offset <= len(data)
+                 and size <= len(data) - offset, 'fat slice bounds')
+        ranges.append((offset, offset + size))
+        if cpu == 0x1000007:
+            selected.append((subtype, offset, size))
+    ranges.sort()
+    _require(all(left[1] <= right[0] for left, right in zip(ranges, ranges[1:])),
+             'overlapping fat slices')
+    _require(architecture == 'x86_64', 'unsupported fat architecture')
+    _require(len(selected) == 1, 'missing or duplicate x86_64 slice')
+    subtype, offset, size = selected[0]
+    payload = data[offset:offset + size]
+    _require(len(payload) >= 32, 'fat slice Mach-O header')
+    magic, cpu, actual_subtype = struct.unpack_from('<III', payload)
+    _require(magic == 0xFEEDFACF and cpu == 0x1000007 and actual_subtype == subtype,
+             'fat slice architecture mismatch')
+    return payload, {'architecture': architecture, 'cpu_subtype': subtype,
+                     'offset': offset, 'size': size,
+                     'sha256': sha256(payload).hexdigest()}
+
+
 def _dependencies(path, architecture):
     """Read load commands, not external tool output or caller dependency claims."""
-    return _dependencies_bytes(path.read_bytes(), architecture)
+    payload, _ = _native_slice(path.read_bytes(), architecture)
+    return _dependencies_bytes(payload, architecture)
 
 
 def _dependencies_bytes(data, architecture):
@@ -262,7 +311,7 @@ def collect(build, build_files, native_files, module_paths, runtime):
                  'overlapping module paths')
     trees = [_tree(path) for path in roots]
     _module_inventory(roots, trees, build_files)
-    graph = {}
+    graph, native_hashes, slices = {}, {}, {}
     module_natives = {name for name, path in files.items()
                       if any(path.is_relative_to(root) for root in roots)}
     pending = list(sorted((_ROOTS | module_natives) - {'bootstrap'}))
@@ -270,9 +319,15 @@ def collect(build, build_files, native_files, module_paths, runtime):
         name = pending.pop()
         if name in graph:
             continue
-        dependencies = (cache_dependencies[str(files[name])]
-                        if str(files[name]) in cache_dependencies else
-                        _dependencies(files[name], runtime['architecture']))
+        if str(files[name]) in cache_dependencies:
+            dependencies = cache_dependencies[str(files[name])]
+        else:
+            data = files[name].read_bytes()
+            payload, selected = _native_slice(data, runtime['architecture'])
+            dependencies = _dependencies_bytes(payload, runtime['architecture'])
+            native_hashes[name] = sha256(data).hexdigest()
+            if selected is not None:
+                slices[name] = selected
         _require(all(path in inverse for path in dependencies), 'missing native dependency')
         roles = sorted(inverse[path] for path in dependencies)
         graph[name] = roles
@@ -291,13 +346,16 @@ def collect(build, build_files, native_files, module_paths, runtime):
                 magic = stream.read(4)
             if path.suffix in ('.so', '.dylib') or magic in (
                     b'\xcf\xfa\xed\xfe', b'\xfe\xed\xfa\xcf',
-                    b'\xca\xfe\xba\xbe', b'\xbe\xba\xfe\xca'):
+                    *_FAT_FORMATS):
                 _require(path in native_paths, 'unbound native module')
     for name in ('imaging', 'imagingft'):
         _require(any(files[name].is_relative_to(root) for root in roots),
                  'Pillow outside verified search paths')
+    native_hashes['bootstrap'] = native_hashes['launcher']
+    if 'launcher' in slices:
+        slices['bootstrap'] = slices['launcher']
     records = sorted([name, cache_artifacts[str(path)] if str(path) in cache_artifacts
-                      else _hash(path)] for name, path in files.items())
+                      else native_hashes[name]] for name, path in files.items())
     deployment = {'kind': 'pillow-basic-deployment-evidence-v1',
                   'build_evidence_sha256': build_identity,
                   'native_artifacts': records,
@@ -306,6 +364,8 @@ def collect(build, build_files, native_files, module_paths, runtime):
                   'bootstrap_container': 'launcher'}
     if cache_evidence is not None:
         deployment['shared_cache'] = cache_evidence
+    if slices:
+        deployment['native_slices'] = sorted([name, record] for name, record in slices.items())
     identity = sha256(canonical_bytes(deployment)).hexdigest()
     manifest = dict(runtime, native_runtime_artifacts=sorted(
         records + [['deployment-evidence', identity]]))
