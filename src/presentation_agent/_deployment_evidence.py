@@ -23,6 +23,10 @@ _ROOTS = _REQUIRED - {'loader', 'c-runtime'}
 # Source inventory for the CPython 3.14 / Pillow 12.3 provider path. Built-in
 # and frozen bootstrap modules live in the already-bound Python framework;
 # _pa_private_bootstrap lives in the launcher, not a Python source file.
+# CPython 3.14 collections/__init__.py aliases collections.abc to the frozen
+# _collections_abc module. Its code is bound by the required python-framework
+# artifact (and python-interpreter identity), not a collections/abc.py file.
+# This is the supported runtime inventory, not observation of loaded modules.
 _PILLOW_MODULES = (
     '__init__', '_version', 'ImageFont', 'Image', 'ExifTags', 'ImageMode',
     'TiffTags', '_binary', '_deprecate', '_typing', '_util',
@@ -35,7 +39,7 @@ _PROVIDER_MODULES = (
 )
 _STDLIB_MODULES = (
     '__future__', '_colorize', '_opcode_metadata', '_weakrefset', 'annotationlib',
-    'ast', 'base64', 'bisect', 'codeop', 'collections/__init__', 'collections/abc',
+    'ast', 'base64', 'bisect', 'codeop', 'collections/__init__',
     'contextlib', 'copy', 'copyreg', 'dataclasses', 'decimal', 'dis',
     'encodings/__init__', 'encodings/aliases', 'encodings/ascii',
     'encodings/utf_8', 'encodings/utf_16_be', 'encodings/mac_roman',

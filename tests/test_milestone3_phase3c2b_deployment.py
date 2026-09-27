@@ -5,6 +5,8 @@ from importlib.util import cache_from_source
 from pathlib import Path
 import py_compile
 import struct
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -94,6 +96,55 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(first['runtime_id'], d.verify(first, self.build,
                          self.build_files, self.native, [self.modules], self.runtime))
         self.assertNotIn(str(self.root), str(first))
+
+    @unittest.skipUnless(sys.version_info[:2] == (3, 14), 'CPython 3.14 runtime check')
+    def test_cpython314_collections_abc_is_frozen_alias(self):
+        # Observe the real isolated runtime, without importing deployment modules
+        # or activating a provider in that process. __file__ alone is misleading
+        # for frozen modules: the loader and origin establish actual resolution.
+        subprocess.run([sys.executable, '-I', '-S', '-B', '-c', '''
+import collections.abc
+import _collections_abc
+from importlib.machinery import FrozenImporter
+assert collections.abc is _collections_abc
+assert _collections_abc.__spec__.loader is FrozenImporter
+assert _collections_abc.__spec__.origin == 'frozen'
+'''], check=True, capture_output=True, text=True)
+
+    def test_collections_alias_requires_package_source_not_fabricated_abc(self):
+        self.assertIn('collections/__init__.py', d._REQUIRED_MODULES)
+        self.assertNotIn('collections/abc.py', d._REQUIRED_MODULES)
+        self.assertNotIn('_collections_abc.py', d._REQUIRED_MODULES)
+        package = self.modules / 'collections/__init__.py'
+        package.write_text('import _collections_abc\nimport sys\n'
+                           'sys.modules["collections.abc"] = _collections_abc\n'
+                           'abc = _collections_abc\n')
+        self.assertFalse((self.modules / 'collections/abc.py').exists())
+        self.assertFalse((self.modules / '_collections_abc.py').exists())
+        result = self.collect()
+        sources = dict(result['deployment']['module_search_paths'][0])
+        self.assertEqual(sources['collections/__init__.py'],
+                         sha256(package.read_bytes()).hexdigest())
+
+    def test_frozen_collections_abc_container_identities_are_required_and_verified(self):
+        expected = self.collect()
+        for role in ('python-interpreter', 'python-framework'):
+            with self.subTest(role=role):
+                path = self.native[role]
+                original = path.read_bytes()
+                records = dict(expected['deployment']['native_artifacts'])
+                self.assertEqual(records[role], sha256(original).hexdigest())
+                path.write_bytes(original + b'changed frozen module container')
+                self.assertNotEqual(expected['runtime_id'], self.collect()['runtime_id'])
+                with self.assertRaisesRegex(ValueError, 'deployment evidence mismatch'):
+                    d.verify(expected, self.build, self.build_files, self.native,
+                             [self.modules], self.runtime)
+                path.write_bytes(original)
+                displaced = self.root / ('missing-' + role)
+                path.rename(displaced)
+                with self.assertRaisesRegex(ValueError, 'required standalone native artifact missing'):
+                    self.collect()
+                displaced.rename(path)
 
     def test_fat_formats_bind_whole_file_and_selected_slice(self):
         path = self.native['launcher']
