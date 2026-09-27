@@ -1,0 +1,111 @@
+"""Phase 4.5A4 bindings and negative protection observations, no activation."""
+from copy import deepcopy
+from hashlib import sha256
+import unittest
+from unittest.mock import patch
+
+from presentation_agent import _launch_policy as p
+from presentation_agent import layout
+from presentation_agent.evidence import canonical_bytes
+import test_milestone3_phase3c2b_deployment as deployment_tests
+
+
+class LaunchPolicyTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture = deployment_tests.DeploymentTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        f = self.fixture
+        self.expected = f.collect()
+        self.args = (self.expected, f.build, f.build_files, f.native,
+                     [str(f.modules)], f.runtime)
+        self.signatures = patch.object(p, '_signature', return_value={'status': 'invalid-or-unsigned'})
+        self.signatures.start()
+        self.addCleanup(self.signatures.stop)
+
+    def test_policy_exact_empty_environment_and_order(self):
+        policy = p.policy()
+        self.assertEqual(policy['environment']['accepted_name_value_pairs'], [])
+        self.assertTrue(policy['environment']['reject_unlisted'])
+        self.assertFalse(policy['environment']['sanitize_before_admission'])
+        self.assertEqual(policy['environment']['ascii_case_insensitive_rejected_prefixes'],
+                         ['FREETYPE_', 'FT2_'])
+        self.assertEqual(policy['initialization_sequence'], [
+            'launcher-admission', 'artifact-runtime-verification',
+            'deferred-python-load', 'isolated-python-bootstrap',
+            'lifecycle-establishment', 'provider-initialization'])
+        policy['environment']['accepted_name_value_pairs'].append(['PATH', '/bin'])
+        self.assertEqual(p.policy()['environment']['accepted_name_value_pairs'], [])
+
+    def test_binding_is_deterministic_and_does_not_change_inputs(self):
+        before = deepcopy(self.expected)
+        result = p.collect(*self.args)
+        self.assertEqual(result, p.collect(*self.args))
+        self.assertEqual(p.verify(result, *self.args), result['evidence_sha256'])
+        self.assertEqual(self.expected, before)
+        self.assertEqual(result['deployment']['deployment_evidence_sha256'],
+                         sha256(canonical_bytes(before)).hexdigest())
+        self.assertEqual(result['deployment']['build_configuration_sha256'],
+                         sha256(canonical_bytes(result['build_configuration'])).hexdigest())
+
+    def test_unsigned_writable_deployment_records_gaps_not_success(self):
+        document = p.collect(*self.args)['deployment']
+        self.assertEqual(document['qualification'], 'not-established')
+        self.assertIn('launcher-signature-invalid-or-unavailable', document['protection_gaps'])
+        self.assertIn('writable-artifact-or-resolution-filesystem', document['protection_gaps'])
+        self.assertIn('fresh-exec-loader-state-not-observed', document['protection_gaps'])
+        roles = document['artifact_protection_observations']
+        self.assertIn('native:launcher', roles)
+        self.assertIn('native:bootstrap', roles)
+        self.assertIn('native:python-framework', roles)
+        self.assertTrue(any(role.startswith('module:0:') for role in roles))
+
+    def test_valid_signature_is_not_preload_or_substitution_proof(self):
+        with patch.object(p, '_signature', return_value={'status': 'valid'}):
+            gaps = p.collect(*self.args)['deployment']['protection_gaps']
+        self.assertIn('preload-prevention-before-entry-not-established', gaps)
+        self.assertIn('substitution-prevention-through-last-use-not-established', gaps)
+
+    def test_policy_order_environment_or_success_tampering_rejects(self):
+        result = p.collect(*self.args)
+        for change in ('sequence', 'environment', 'qualification', 'gaps'):
+            altered = deepcopy(result)
+            if change == 'sequence':
+                altered['build_configuration']['launch_policy']['initialization_sequence'].reverse()
+            elif change == 'environment':
+                altered['build_configuration']['launch_policy']['environment']['accepted_name_value_pairs'] = [['FT2_X', '']]
+            elif change == 'qualification':
+                altered['deployment']['qualification'] = 'qualified'
+            else:
+                altered['deployment']['protection_gaps'] = []
+            with self.assertRaises(ValueError):
+                p.verify(altered, *self.args)
+
+    def test_changed_artifact_symlink_or_cache_rejects(self):
+        launcher = self.fixture.native['launcher']
+        original = launcher.read_bytes()
+        launcher.write_bytes(original + b'changed')
+        with self.assertRaises(ValueError):
+            p.collect(*self.args)
+        launcher.write_bytes(original)
+        link = self.fixture.root / 'launcher-link'
+        link.symlink_to(launcher)
+        with self.assertRaises(ValueError):
+            p._path_observation(link)
+        (self.fixture.modules / 'unexpected.pyc').write_bytes(b'cache')
+        with self.assertRaises(ValueError):
+            p.collect(*self.args)
+
+    def test_permissions_change_changes_evidence(self):
+        result = p.collect(*self.args)
+        self.fixture.native['launcher'].chmod(0o400)
+        with self.assertRaises(ValueError):
+            p.verify(result, *self.args)
+
+    def test_ordinary_provider_remains_closed(self):
+        with self.assertRaises(ValueError):
+            layout._open_provider(None)
+
+
+if __name__ == '__main__':
+    unittest.main()
