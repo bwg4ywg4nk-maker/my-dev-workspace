@@ -100,6 +100,15 @@ static int original_record(char *buf, size_t size, char **env, size_t *count) {
 #include "loader_state.c"
 #include "attachment_launcher.c"
 
+#ifdef PA_NATIVE_BINDING_ADAPTER
+#include "deployment_inputs.h"
+static const struct pa_checks production_checks = {
+    native_verify_launcher, native_verify_framework,
+    native_verify_build, native_verify_runtime,
+    &pa_deployment_startup, &pa_deployment_attachment
+};
+#endif
+
 static void *verified_load(char *const *env, size_t count,
                            const struct pa_pair *allow, size_t allowed,
                            const char *path, const struct pa_checks *checks) {
@@ -161,16 +170,15 @@ int main(void) {
     int mib[] = {CTL_KERN, KERN_PROCARGS2, (int)getpid()};
     size_t size = PA_MAX_BYTES, count = PA_MAX_ENV + 1;
     char *buf = malloc(size), *env[PA_MAX_ENV];
-    /* No deployment verifier or framework is authorized in Phase 2. */
-    const struct pa_checks closed = {0};
     void *handle = NULL;
     if (!buf || sysctl(mib, 3, buf, &size, NULL, 0) != 0 ||
         !original_record(buf, size, env, &count)) count = PA_MAX_ENV + 1;
     /* Always enter native verification, even with no authorized deployment.
      * Missing inventory denies here; it never authorizes provider loading. */
 #ifdef PA_NATIVE_BINDING_ADAPTER
-    handle = native_binding_load(env, count, NULL, 0, &closed);
+    handle = native_binding_load(env, count, NULL, 0, &production_checks);
 #else
+    const struct pa_checks closed = {0}; /* Test-only legacy seam. */
     handle = verified_load(env, count, NULL, 0, NULL, &closed);
 #endif
     free(buf);

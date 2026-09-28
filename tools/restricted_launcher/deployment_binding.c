@@ -30,6 +30,7 @@ static int binding_string(struct pa_binding_cursor *c, const char *s) {
     }
     return binding_literal(c,"\"");
 }
+#include "provider_identity.c"
 static int native_binding_verify(const struct pa_attachment_binding *b,
                                   const char *pins, size_t pins_size) {
     const struct pa_native_binding *n = b->native;
@@ -38,8 +39,7 @@ static int native_binding_verify(const struct pa_attachment_binding *b,
     struct pa_binding_cursor c;
     unsigned char digest[32]; size_t i, j; uint32_t images, maps, launchers = 0;
     if (!n || !n->bytes || !n->launcher || !s || !s->bytes ||
-        n->size > 2 * (PA_STARTUP_HEADER + PA_MAX_IMAGES * PA_STARTUP_IMAGE +
-                       256 * PA_STARTUP_MAPPING) + 131072 ||
+        n->size > 16 * 1024 * 1024 ||
         !CC_SHA256(n->bytes,(CC_LONG)n->size,digest) ||
         !pa_attachment_nonzero(n->sha256,32) || memcmp(digest,n->sha256,32) ||
         s->size < PA_STARTUP_HEADER || memcmp(s->bytes,"PAEXEC01",8) ||
@@ -69,7 +69,9 @@ static int native_binding_verify(const struct pa_attachment_binding *b,
         !binding_hex(&c,r->pin_sha256,32) ||
         !binding_literal(&c,"\",\"deployment_sha256\":\"") ||
         !binding_hex(&c,b->deployment_sha256,32) ||
-        !binding_literal(&c,"\",\"kind\":\"trusted-admin-deployment-binding-v1\",\"launch_policy_sha256\":\"") ||
+        !binding_literal(&c,n->provider ?
+            "\",\"kind\":\"trusted-admin-deployment-binding-v2\",\"launch_policy_sha256\":\"" :
+            "\",\"kind\":\"trusted-admin-deployment-binding-v1\",\"launch_policy_sha256\":\"") ||
         !binding_hex(&c,b->policy_sha256,32) ||
         !binding_literal(&c,"\",\"launcher\":") || !binding_string(&c,n->launcher) ||
         !binding_literal(&c,",\"module_paths\":[")) return 0;
@@ -86,6 +88,8 @@ static int native_binding_verify(const struct pa_attachment_binding *b,
     }
     return binding_literal(&c,"],\"protected_deployment\":") &&
         binding_take(&c,pins,pins_size) &&
+        (!n->provider || (binding_literal(&c,",\"provider_identity\":") &&
+                          provider_identity_verify(&c,b,pins))) &&
         binding_literal(&c,",\"python_framework\":") && binding_string(&c,b->framework) &&
         binding_literal(&c,",\"python_interpreter\":") && binding_string(&c,b->python) &&
         binding_literal(&c,",\"startup_inventory\":{\"bytes_hex\":\"") &&

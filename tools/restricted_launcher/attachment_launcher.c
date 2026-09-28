@@ -8,11 +8,28 @@
 
 /* Independently reviewed, compiled input; never populated from argv/environ.
  * The digest authenticates exact package bytes, not a caller's JSON claims. */
+struct pa_identity_document {
+    const unsigned char *bytes;
+    size_t size;
+    unsigned char sha256[32];
+};
+struct pa_provider_artifact {
+    const char *role, *path;
+    unsigned char sha256[32];
+};
+struct pa_provider_identity {
+    unsigned char adapter_sha256[32], build_evidence_sha256[32], font_sha256[32];
+    unsigned char deployment_document_sha256[32];
+    struct pa_identity_document build, runtime, profile;
+    const struct pa_provider_artifact *artifacts;
+    size_t count;
+};
 struct pa_native_binding {
     const unsigned char *bytes;
     size_t size;
     unsigned char sha256[32];
     const char *launcher;
+    const struct pa_provider_identity *provider;
 };
 struct pa_attachment_binding {
     const char *deployment, *policy, *python, *framework;
@@ -155,3 +172,23 @@ static int attachment_launch_handoff(void *handle, const wchar_t *const *paths, 
         if (!paths[i] || wcscmp(paths[i],b->modules[i])) return attachment_launch_reject();
     return 1;
 }
+
+/* These are the production callbacks, not caller-supplied success claims.
+ * Each boundary authenticates the v2 package and rehashes its artifact closure.
+ * Direct calls without the retained native lease/lifecycle permanently deny. */
+static int native_provider_prerequisite(void) {
+    const struct pa_checks *c = attachment_launch.checks;
+    if (!c || !c->attachment || !c->attachment->native ||
+        !c->attachment->native->provider || !attachment_launch_boundary())
+        return attachment_launch_reject();
+    return 1;
+}
+static int native_verify_launcher(void) { return native_provider_prerequisite(); }
+static int native_verify_framework(const char *path) {
+    if (!native_provider_prerequisite() || !path ||
+        strcmp(path,attachment_launch.checks->attachment->framework))
+        return attachment_launch_reject();
+    return attachment_launch_boundary();
+}
+static int native_verify_build(void) { return native_provider_prerequisite(); }
+static int native_verify_runtime(void) { return native_provider_prerequisite(); }

@@ -27,7 +27,10 @@ static struct {
     size_t environment_count;
 } lifecycle;
 
-static int invalidate(void) { lifecycle.invalid = 1; return 0; }
+static int invalidate(void) {
+    lifecycle.invalid = 1;
+    return attachment_launch_reject();
+}
 static int environment_matches(void) {
     size_t i;
     for (i = 0; environ && environ[i]; ++i)

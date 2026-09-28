@@ -52,7 +52,7 @@ def _startup_binding(data, deployment_hash, root, launcher):
 
 
 def collect(expected, expected_policy, build, build_files, native_files,
-            module_paths, runtime):
+            module_paths, runtime, *, font_file=None):
     """Return canonical bytes only after authenticated offline re-verification.
 
     The existing process-wide protection lifecycle latches failures and rejects
@@ -91,7 +91,7 @@ def collect(expected, expected_policy, build, build_files, native_files,
         startup = _startup_binding(inventory.collect(*args),
                                    pins['deployment_sha256'], root, launcher)
         checkpoint()
-        result = canonical_bytes({
+        package = {
             'kind': 'trusted-admin-deployment-binding-v1',
             # Exact installed pin bytes, also bound by the native attachment
             # record's pin_sha256; semantic JSON equality cannot replace this.
@@ -102,7 +102,13 @@ def collect(expected, expected_policy, build, build_files, native_files,
             'launcher': launcher, 'python_framework': framework,
             'python_interpreter': python, 'module_paths': modules,
             'protected_deployment': dict(pins),
-        })
+        }
+        if font_file is not None:
+            from ._provider_identity import collect as provider_identity
+            package['kind'] = 'trusted-admin-deployment-binding-v2'
+            package['provider_identity'] = provider_identity(
+                expected, build, build_files, native_files, module_paths, font_file, root)
+        result = canonical_bytes(package)
         checkpoint()
         return result
     except BaseException:
@@ -110,10 +116,10 @@ def collect(expected, expected_policy, build, build_files, native_files,
         raise
 
 
-def verify(package, *args):
+def verify(package, *args, **kwargs):
     """Re-derive exact bytes against installed pins; return no authorization."""
     try:
-        _require(type(package) is bytes and collect(*args) == package,
+        _require(type(package) is bytes and collect(*args, **kwargs) == package,
                  'binding package mismatch')
     except BaseException:
         protection._lifecycle.reject()
