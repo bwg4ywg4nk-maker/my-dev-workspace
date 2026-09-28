@@ -1,17 +1,26 @@
 /* Private compiled deployment binding, never an environment/Python input.
  * The deployment adapter must authenticate these exact paths/digests and the
- * existing artifact callbacks together. No adapter is installed in this phase.
+ * existing artifact callbacks together. Production installs no deployment.
  * Evidence files are canonical bytes produced by the existing offline tools;
  * this layer binds their identities, not their semantic verification callbacks. */
 #include <wchar.h>
 #include "attachment_observer.c"
 
+/* Independently reviewed, compiled input; never populated from argv/environ.
+ * The digest authenticates exact package bytes, not a caller's JSON claims. */
+struct pa_native_binding {
+    const unsigned char *bytes;
+    size_t size;
+    unsigned char sha256[32];
+    const char *launcher;
+};
 struct pa_attachment_binding {
     const char *deployment, *policy, *python, *framework;
     const wchar_t *const *modules;
     size_t module_count;
     unsigned char deployment_sha256[32], policy_sha256[32];
     unsigned char python_sha256[32], framework_sha256[32], inventory_sha256[32];
+    const struct pa_native_binding *native;
 };
 static struct {
     int attempted, invalid, loaded, bound;
@@ -73,6 +82,10 @@ static int attachment_launch_fingerprint(const struct pa_attachment_binding *b) 
         if (n == 1024 || !CC_SHA256_Update(&ctx,b->modules[i],
                                           (CC_LONG)((n+1)*sizeof(wchar_t)))) return 0;
     }
+    if (b->native && (!b->native->launcher ||
+        (n = strnlen(b->native->launcher,1024)) == 1024 ||
+        !CC_SHA256_Update(&ctx,b->native,sizeof(*b->native)) ||
+        !CC_SHA256_Update(&ctx,b->native->launcher,(CC_LONG)n+1))) return 0;
     if (!CC_SHA256_Final(digest,&ctx)) return 0;
     if (attachment_launch.bound)
         return !memcmp(digest,attachment_launch.binding_sha256,32);
@@ -80,13 +93,14 @@ static int attachment_launch_fingerprint(const struct pa_attachment_binding *b) 
     attachment_launch.bound = 1;
     return 1;
 }
+#include "deployment_binding.c"
 static int attachment_launch_binding(void) {
     const struct pa_checks *c = attachment_launch.checks;
     const struct pa_attachment_binding *b = c ? c->attachment : NULL;
     const struct pa_attachment_record *r = &pa_attachment_observer.source.record;
     unsigned char digest[32]; struct pa_attachment_stamp stamp;
     char pins[16384], expected[90]; size_t size = sizeof(pins), i, j;
-    if (!b || !attachment_launch_fingerprint(b) || !c->startup || !c->startup->bytes ||
+    if (!b || !b->native || !attachment_launch_fingerprint(b) || !c->startup || !c->startup->bytes ||
         c->startup->size < PA_STARTUP_HEADER ||
         c->startup->size > PA_STARTUP_HEADER + PA_MAX_IMAGES * PA_STARTUP_IMAGE + 256 * PA_STARTUP_MAPPING ||
         memcmp(b->deployment_sha256,r->deployment_sha256,32) ||
@@ -120,7 +134,7 @@ static int attachment_launch_binding(void) {
         }
         if (j == sizeof(path) || !attachment_launch_path(path,1,NULL)) return 0;
     }
-    return 1;
+    return native_binding_verify(b,pins,size);
 }
 static int attachment_launch_boundary(void) {
     if (!attachment_launch.attempted || attachment_launch.invalid ||

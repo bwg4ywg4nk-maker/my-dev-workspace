@@ -141,6 +141,21 @@ static void *verified_load(char *const *env, size_t count,
 
 #include "bootstrap.c"
 
+#ifdef PA_NATIVE_BINDING_ADAPTER
+/* Private native entry: package absence cannot fall back to the older seam.
+ * verified_load owns the one-shot lifecycle and lease at every boundary. */
+static void *native_binding_load(char *const *env, size_t count,
+                                const struct pa_pair *allow, size_t allowed,
+                                const struct pa_checks *checks) {
+    struct pa_process_identity identity;
+    if (!pin_process_identity(&identity) ||
+        !checks || !checks->attachment || !checks->attachment->native) {
+        attachment_launch_reject(); return NULL;
+    }
+    return verified_load(env,count,allow,allowed,checks->attachment->framework,checks);
+}
+#endif
+
 int main(void) {
 #ifdef __APPLE__
     int mib[] = {CTL_KERN, KERN_PROCARGS2, (int)getpid()};
@@ -153,7 +168,11 @@ int main(void) {
         !original_record(buf, size, env, &count)) count = PA_MAX_ENV + 1;
     /* Always enter native verification, even with no authorized deployment.
      * Missing inventory denies here; it never authorizes provider loading. */
+#ifdef PA_NATIVE_BINDING_ADAPTER
+    handle = native_binding_load(env, count, NULL, 0, &closed);
+#else
     handle = verified_load(env, count, NULL, 0, NULL, &closed);
+#endif
     free(buf);
     if (handle) {
         /* No verified deployment search paths are authorized yet. */

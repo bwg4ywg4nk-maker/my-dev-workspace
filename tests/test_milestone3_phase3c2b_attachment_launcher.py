@@ -5,6 +5,9 @@ These tests exercise real launcher ordering, evidence binding, and handoff with
 controlled observer outcomes and file/mount observations, without provisioning.
 """
 from pathlib import Path
+from hashlib import sha256
+import json
+import struct
 import shutil
 import subprocess
 import sys
@@ -52,7 +55,7 @@ static int fixture_fs(int fd, struct statfs *fs) {
 HARNESS = r'''
 #include <assert.h>
 #include <sys/wait.h>
-static unsigned char inventory[PA_STARTUP_HEADER];
+static unsigned char inventory[68 + 2 * 4172 + 56];
 static struct pa_startup_binding startup;
 static struct pa_attachment_binding binding;
 static struct pa_checks checks;
@@ -131,9 +134,24 @@ static void setup(const char *directory) {
     CC_SHA256(pins,(CC_LONG)strlen(pins),r->pin_sha256);
     checks = (struct pa_checks){step,framework_check,step,step,&startup,&binding};
 }
+static struct pa_native_binding native;
+static unsigned char package[32768];
+static void native_setup(void) {
+    char path[1200]; int fd; ssize_t n;
+    snprintf(path,sizeof(path),"%s/inventory",root);
+    fd = open(path,O_RDONLY); assert(fd >= 0);
+    assert(read(fd,inventory,sizeof(inventory)) == sizeof(inventory)); close(fd);
+    CC_SHA256(inventory,sizeof(inventory),startup.sha256);
+    memcpy(binding.inventory_sha256,startup.sha256,32);
+    snprintf(path,sizeof(path),"%s/package",root);
+    fd = open(path,O_RDONLY); assert(fd >= 0);
+    n = read(fd,package,sizeof(package)); close(fd); assert(n > 0);
+    native.bytes = package; native.size = (size_t)n; native.launcher = python;
+    CC_SHA256(package,(CC_LONG)n,native.sha256); binding.native = &native;
+}
 int main(int argc, char **argv) {
     void *h; int success = 0;
-    assert(argc == 3); setup(argv[2]);
+    assert(argc == 3); setup(argv[2]); native_setup();
     strcpy(caller_path,framework);
     if (!strcmp(argv[1],"valid") || !strcmp(argv[1],"retry") ||
         !strcmp(argv[1],"handoff-path") || !strcmp(argv[1],"handoff-handle") ||
@@ -238,6 +256,33 @@ class AttachmentLauncherTests(unittest.TestCase):
             '-o', str(cls.binary)], capture_output=True, text=True)
         if result.returncode:
             raise AssertionError(result.stderr)
+
+        root = cls.work
+        digest = lambda name: sha256((root / name).read_bytes()).hexdigest()
+        pins = dict(backing_file='/admin/image.dmg', backing_sha256='01' * 32,
+                    build_sha256='01' * 32, deployment_sha256=digest('deployment'),
+                    inputs_sha256='01' * 32, kind='trusted-admin-readonly-image-v1',
+                    launch_policy_sha256=digest('policy'), root=str(root))
+        canonical = lambda obj: json.dumps(obj, sort_keys=True, separators=(',', ':')).encode()
+        inventory = struct.pack('<8s32s20sII', b'PAEXEC01',
+                                bytes.fromhex(digest('deployment')), b'\x01' * 20, 2, 1)
+        for kind, name in enumerate(('python', 'framework')):
+            inventory += struct.pack('<I4096s32s32sQ', kind, str(root / name).encode(),
+                                     bytes.fromhex(digest(name)), b't' * 32, 4096)
+        inventory += struct.pack('<QQII32s', 4096, 4096, 5, 5, b'm' * 32)
+        package = dict(attachment_pin_sha256=sha256(canonical(pins)).hexdigest(),
+                       deployment_sha256=digest('deployment'),
+                       kind='trusted-admin-deployment-binding-v1',
+                       launch_policy_sha256=digest('policy'), launcher=str(root / 'python'),
+                       module_paths=[str(root / 'modules')], protected_deployment=pins,
+                       python_framework=str(root / 'framework'),
+                       python_interpreter=str(root / 'python'),
+                       startup_inventory=dict(bytes_hex=inventory.hex(),
+                           deployment_sha256=digest('deployment'), launcher_cdhash='01' * 20,
+                           sha256=sha256(inventory).hexdigest()))
+        (root / 'inventory').write_bytes(inventory)
+        (root / 'package').write_bytes(canonical(package))
+
 
     def run_case(self, case):
         result = subprocess.run([str(self.binary), case, str(self.work)],
