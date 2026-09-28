@@ -6,7 +6,9 @@ Compile with existing Apple tools and CPython 3.14 headers (no Python linkage):
 mkdir -p build/phase2
 clang -std=c11 -Wall -Wextra -Werror \
   -I/Library/Frameworks/Python.framework/Versions/3.14/include/python3.14 \
-  tools/restricted_launcher/launcher.c -o build/phase2/launcher
+  -Wno-deprecated-declarations \
+  tools/restricted_launcher/launcher.c -framework IOKit \
+  -framework CoreFoundation -lbsm -o build/phase2/launcher
 ```
 
 The native entry reads macOS `KERN_PROCARGS2` for its own original exec
@@ -91,3 +93,18 @@ concrete deployment adapters, substitution protection, and supported deployment
 constraints remain unresolved. A fork before the initial identity pin is not
 attested by these checks. Offline launch-policy gaps remain unchanged. Test-only
 harness substitutions never authorize production execution or qualification.
+
+The attachment observer is now retained by the native launcher before Python
+loading. Its single lease binds the protected deployment and launch-policy
+bytes, startup inventory, exact interpreter/framework files, and ordered module
+roots supplied by the private compiled deployment adapter. Each artifact
+callback, the load boundary, and the isolated bootstrap handoff recheck the
+observer and original PID/CDHash. Bootstrap boundaries retain that identity
+instead of establishing a replacement lease. Failures latch permanently.
+
+The observer's IOKit/audit dependencies are native startup dependencies and must
+be included in any future authenticated startup inventory. Existing inventories
+and launcher signatures do not authorize this rebuilt binary. The production
+entry still supplies no deployment adapter and exits 78; provider loading,
+qualification, and Phase 4.5B remain closed. This integration does not implement
+the observer's administrative provisioning prerequisite.

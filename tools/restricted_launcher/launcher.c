@@ -18,12 +18,14 @@ struct pa_pair { const char *name, *value; };
  * Framework verification includes the exact absolute path, byte identity,
  * dependencies and protection against substitution before dlopen. */
 struct pa_startup_binding;
+struct pa_attachment_binding;
 struct pa_checks {
     int (*launcher)(void);
     int (*framework)(const char *);
     int (*build_evidence)(void);
     int (*runtime_artifacts)(void);
     const struct pa_startup_binding *startup;
+    const struct pa_attachment_binding *attachment;
 };
 
 static unsigned char upper(unsigned char c) {
@@ -96,24 +98,45 @@ static int original_record(char *buf, size_t size, char **env, size_t *count) {
 }
 
 #include "loader_state.c"
+#include "attachment_launcher.c"
 
 static void *verified_load(char *const *env, size_t count,
                            const struct pa_pair *allow, size_t allowed,
                            const char *path, const struct pa_checks *checks) {
     struct pa_process_identity identity;
+    const char *framework_path;
+    void *handle;
+    if (attachment_launch.attempted || attachment_launch.invalid) {
+        attachment_launch_reject(); return NULL;
+    }
+    attachment_launch.attempted = 1;
     if (!pin_process_identity(&identity) ||
         !require_loader_state(checks ? checks->startup : NULL, &identity) ||
-        !process_identity_matches(&identity)) return NULL;
+        !process_identity_matches(&identity)) goto reject;
     if (!admit(env, count, allow, allowed) || !path || path[0] != '/' ||
         !checks || !checks->launcher || !checks->framework ||
-        !checks->build_evidence || !checks->runtime_artifacts) return NULL;
-    if (!checks->launcher() || !process_identity_matches(&identity) ||
-        !checks->framework(path) || !process_identity_matches(&identity) ||
-        !checks->build_evidence() || !process_identity_matches(&identity) ||
-        !checks->runtime_artifacts() || !process_identity_matches(&identity) ||
+        !checks->build_evidence || !checks->runtime_artifacts ||
+        !checks->attachment || !checks->attachment->framework ||
+        strcmp(path,checks->attachment->framework)) goto reject;
+    attachment_launch.identity = identity;
+    attachment_launch.checks = checks;
+    if (!pa_attachment_observer_open() || !attachment_launch_boundary()) goto reject;
+    framework_path = checks->attachment->framework;
+    if (!checks->launcher() || !attachment_launch_boundary() || !process_identity_matches(&identity) ||
+        !checks->framework(framework_path) || !attachment_launch_boundary() || !process_identity_matches(&identity) ||
+        !checks->build_evidence() || !attachment_launch_boundary() || !process_identity_matches(&identity) ||
+        !checks->runtime_artifacts() || !attachment_launch_boundary() || !process_identity_matches(&identity) ||
         !require_loader_state(checks->startup, &identity) ||
-        !process_identity_matches(&identity)) return NULL;
-    return dlopen(path, RTLD_NOW | RTLD_LOCAL);
+        !process_identity_matches(&identity)) goto reject;
+    if (!attachment_launch_boundary()) goto reject;
+    handle = dlopen(framework_path, RTLD_NOW | RTLD_LOCAL);
+    if (!handle || !attachment_launch_boundary()) goto reject;
+    attachment_launch.handle = handle;
+    attachment_launch.loaded = 1;
+    return handle;
+ reject:
+    attachment_launch_reject();
+    return NULL;
 }
 
 #include "bootstrap.c"

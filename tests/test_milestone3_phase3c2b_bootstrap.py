@@ -7,6 +7,8 @@ import sysconfig
 import tempfile
 import unittest
 
+from attachment_launcher_test_support import STUB
+
 ROOT = Path(__file__).resolve().parents[1]
 
 HARNESS = r'''
@@ -95,6 +97,9 @@ class BootstrapTests(unittest.TestCase):
         parent.mkdir(parents=True, exist_ok=True)
         work = Path(tempfile.mkdtemp(dir=parent))
         source = work / 'harness.c'
+        (work / 'launcher.c').write_text(
+            (ROOT / 'tools/restricted_launcher/launcher.c').read_text().replace(
+                '#include "attachment_launcher.c"', STUB))
         cls.binary = work / 'harness'
         base = Path(sys.base_prefix)
         source.write_text(

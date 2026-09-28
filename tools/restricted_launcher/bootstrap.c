@@ -39,7 +39,7 @@ static int boundary(void) {
     PyObject *dict, *key, *value;
     Py_ssize_t pos = 0, i;
     if (lifecycle.invalid || !lifecycle.ready || lifecycle.pid != getpid() ||
-        !environment_matches()) return invalidate();
+        !environment_matches() || !attachment_launch_boundary()) return invalidate();
     if (pa_PyDict_GetItemString(pa_PyImport_GetModuleDict(), "_pa_private_bootstrap")
         != lifecycle.module) return invalidate();
     if (pa_PySys_GetObject("path") != lifecycle.path ||
@@ -58,6 +58,7 @@ static int boundary(void) {
 static PyObject *private_entry(PyObject *self, PyObject *args) {
     (void)self; (void)args;
     /* No provider activation in Phase 3. Calling this cannot qualify a process. */
+    (void)boundary();
     return pa_PyBool_FromLong(0);
 }
 static PyMethodDef entry_definition = {
@@ -75,7 +76,8 @@ static int isolated_bootstrap(void *handle, const wchar_t *const *paths, size_t 
     if (lifecycle.attempted || lifecycle.invalid) return invalidate();
     lifecycle.attempted = 1;
     lifecycle.pid = getpid();
-    if (!handle || !paths || !count) return invalidate();
+    if (!handle || !paths || !count ||
+        !attachment_launch_handoff(handle, paths, count)) return invalidate();
 #define PA_RESOLVE(name) do { *(void **)(&pa_##name) = dlsym(handle, #name); \
     if (!pa_##name) return invalidate(); } while (0);
     PA_APIS(PA_RESOLVE)
@@ -106,9 +108,12 @@ static int isolated_bootstrap(void *handle, const wchar_t *const *paths, size_t 
     status = pa_PyConfig_SetString(&config, &config.program_name, L"restricted-launcher");
     for (i = 0; !pa_PyStatus_Exception(status) && i < count; ++i)
         status = pa_PyWideStringList_Append(&config.module_search_paths, paths[i]);
+    if (!attachment_launch_boundary()) {
+        pa_PyConfig_Clear(&config); return invalidate();
+    }
     if (!pa_PyStatus_Exception(status)) status = pa_Py_InitializeFromConfig(&config);
     pa_PyConfig_Clear(&config);
-    if (pa_PyStatus_Exception(status)) return invalidate();
+    if (pa_PyStatus_Exception(status) || !attachment_launch_boundary()) return invalidate();
     lifecycle.module = pa_PyImport_AddModule("_pa_private_bootstrap");
     if (!lifecycle.module) return invalidate();
     pa_Py_IncRef(lifecycle.module);

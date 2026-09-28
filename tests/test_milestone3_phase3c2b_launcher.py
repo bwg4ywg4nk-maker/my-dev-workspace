@@ -7,6 +7,8 @@ import sysconfig
 import tempfile
 import unittest
 
+from attachment_launcher_test_support import STUB
+
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'tools/restricted_launcher/launcher.c'
 
@@ -37,7 +39,8 @@ static int build(void) { return step(3); }
 static int runtime(void) { return step(4); }
 int main(int argc, char **argv) {
     const struct pa_pair allow[] = {{"HOME", "/fixed"}, {"EMPTY", ""}};
-    const struct pa_checks checks = {launcher, framework, build, runtime, NULL};
+    const struct pa_attachment_binding attachment = {"/exact/Python"};
+    const struct pa_checks checks = {launcher, framework, build, runtime, NULL, &attachment};
     char *good[] = {"HOME=/fixed", "EMPTY="};
     (void)&require_loader_state; /* Keep the real closed boundary compiled. */
     assert(argc == 2);
@@ -157,6 +160,10 @@ class LauncherTests(unittest.TestCase):
         source = cls.work / 'harness.c'
         instrumented = cls.work / 'launcher.c'
         instrumented.write_text(SOURCE.read_text().replace(
+            '#include "attachment_launcher.c"', STUB).replace(
+            '    if (attachment_launch.attempted || attachment_launch.invalid)',
+            '    memset(&attachment_launch, 0, sizeof(attachment_launch));\n'
+            '    if (attachment_launch.attempted || attachment_launch.invalid)').replace(
             '#include \"loader_state.c\"',
             '#include \"loader_state.c\"\n'
             'static int fake_loader_state(const struct pa_startup_binding *, const struct pa_process_identity *);\n'
@@ -177,6 +184,8 @@ class LauncherTests(unittest.TestCase):
             f'#include "{instrumented}"\n#undef main\n#undef dlopen\n#undef require_loader_state\n' + HARNESS)
         for src, output in ((SOURCE, cls.launcher), (source, cls.harness)):
             subprocess.run(['clang', '-std=c11', '-Wall', '-Wextra', '-Werror',
+                            '-Wno-deprecated-declarations',
+                            '-framework', 'IOKit', '-framework', 'CoreFoundation', '-lbsm',
                             '-I' + sysconfig.get_path('include'), '-I' + str(SOURCE.parent),
                             str(src), '-o', str(output)], check=True, capture_output=True)
 
@@ -212,8 +221,13 @@ class LauncherTests(unittest.TestCase):
         result = subprocess.run(['otool', '-L', str(self.launcher)],
                                 check=True, capture_output=True, text=True)
         dependencies = result.stdout.splitlines()[1:]
-        self.assertEqual(len(dependencies), 1)
-        self.assertIn('/usr/lib/libSystem.B.dylib', dependencies[0])
+        self.assertTrue(any('/usr/lib/libSystem.B.dylib' in p for p in dependencies))
+        self.assertTrue(any('IOKit.framework' in p for p in dependencies))
+        self.assertFalse(any('Python' in p for p in dependencies))
+        self.assertTrue(all(any(allowed in p for allowed in
+                               ('libSystem.B.dylib', 'IOKit.framework',
+                                'CoreFoundation.framework', 'libbsm.', 'libobjc.A.dylib'))
+                            for p in dependencies))
 
     def test_ordinary_python_provider_gate_stays_closed(self):
         from presentation_agent import layout
