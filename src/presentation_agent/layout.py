@@ -875,13 +875,35 @@ def _profile_preflight(profile, font_bytes, limits):
 
 
 def _open_provider(profile):
-    """Private pass-10 seam; deliberately closed until the trusted bootstrap exists.
+    """Private pass-10 seam; opened only by the trusted native bootstrap.
 
-    A controlled double supplies basic_engine, inspect_font and load_font.
-    A future adapter must establish the entire compatibility/lifecycle binding
-    before returning; this seam is not a public plugin or certification API.
+    Ordinary Python execution fails closed. No token, setter, or environment
+    bypass is accepted. The native bootstrap verifies the profile against the
+    authenticated native identity and supplies the bound provider.
     """
-    raise ValueError('Controlled fresh-process lifecycle/build/runtime binding unavailable')
+    import sys
+    import types
+    from .evidence import canonical_bytes
+    _exact(profile, LayoutProfile)
+    bootstrap = sys.modules.get('_pa_private_bootstrap')
+    if bootstrap is None:
+        raise ValueError('Controlled fresh-process lifecycle/build/runtime binding unavailable')
+    opener = getattr(bootstrap, '_open_provider', None)
+    if (opener is None or not isinstance(opener, types.BuiltinFunctionType) or
+        getattr(opener, '__module__', None) != '_pa_private_bootstrap'):
+        raise ValueError('Controlled fresh-process lifecycle/build/runtime binding unavailable')
+    try:
+        desc_bytes = canonical_bytes(_descriptor(profile))
+        provider = opener(desc_bytes)
+        if (provider is None or not hasattr(provider, 'basic_engine') or
+            not hasattr(provider, 'inspect_font') or not hasattr(provider, 'load_font') or
+            not hasattr(provider, 'audit_font')):
+            raise ValueError('Controlled fresh-process lifecycle/build/runtime binding unavailable')
+        return provider
+    except Exception as exc:
+        if isinstance(exc, ValueError):
+            raise
+        raise ValueError('Controlled fresh-process lifecycle/build/runtime binding unavailable') from exc
 
 
 def _load_fonts(provider, font_bytes, profile):

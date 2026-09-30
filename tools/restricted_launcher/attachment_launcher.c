@@ -183,6 +183,11 @@ static int native_provider_prerequisite(void) {
         return attachment_launch_reject();
     return 1;
 }
+static const struct pa_provider_identity *native_provider_identity(void) {
+    const struct pa_checks *c = attachment_launch.checks;
+    if (!native_provider_prerequisite()) return NULL;
+    return c->attachment->native->provider;
+}
 static int native_verify_launcher(void) { return native_provider_prerequisite(); }
 static int native_verify_framework(const char *path) {
     if (!native_provider_prerequisite() || !path ||

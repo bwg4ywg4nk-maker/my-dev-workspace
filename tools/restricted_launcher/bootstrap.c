@@ -14,7 +14,8 @@ extern char **environ;
  X(PyDict_GetItemString) X(PyDict_SetItemString) X(PyImport_GetModuleDict) \
  X(PyCFunction_NewEx) X(PyObject_CallNoArgs) X(Py_DecRef) X(Py_IncRef) \
  X(PyBool_FromLong) X(PyErr_Clear) X(Py_GetVersion) \
- X(PySys_GetObject) X(PyList_GetSlice) X(PyList_Size) X(PyList_GetItem)
+ X(PySys_GetObject) X(PyList_GetSlice) X(PyList_Size) X(PyList_GetItem) \
+ X(PyBytes_AsStringAndSize) X(PyImport_ImportModule) X(PyObject_GetAttrString)
 #define PA_DECLARE(name) static __typeof__(&name) pa_##name;
 PA_APIS(PA_DECLARE)
 #undef PA_DECLARE
@@ -22,7 +23,7 @@ PA_APIS(PA_DECLARE)
 static struct {
     pid_t pid;
     int attempted, invalid, ready;
-    PyObject *module, *entry, *snapshot, *path, *path_snapshot;
+    PyObject *module, *entry, *open_provider, *snapshot, *path, *path_snapshot;
     char **environment;
     size_t environment_count;
 } lifecycle;
@@ -60,12 +61,62 @@ static int boundary(void) {
 }
 static PyObject *private_entry(PyObject *self, PyObject *args) {
     (void)self; (void)args;
-    /* No provider activation in Phase 3. Calling this cannot qualify a process. */
-    (void)boundary();
-    return pa_PyBool_FromLong(0);
+    if (!boundary() || !native_provider_identity()) return pa_PyBool_FromLong(0);
+    return pa_PyBool_FromLong(1);
+}
+static PyObject *private_open_provider(PyObject *self, PyObject *arg) {
+    char *buf;
+    Py_ssize_t len;
+    const struct pa_provider_identity *p;
+    PyObject *mod, *cls, *core;
+    (void)self;
+    if (!boundary()) {
+        invalidate();
+        return NULL;
+    }
+    p = native_provider_identity();
+    if (!p || !p->profile.bytes || !p->profile.size) {
+        invalidate();
+        return NULL;
+    }
+    if (!arg || pa_PyBytes_AsStringAndSize(arg, &buf, &len) < 0 ||
+        (size_t)len != p->profile.size ||
+        memcmp(buf, p->profile.bytes, p->profile.size) != 0) {
+        pa_PyErr_Clear();
+        invalidate();
+        return NULL;
+    }
+    mod = pa_PyImport_ImportModule("presentation_agent._pillow_basic");
+    if (!mod) {
+        pa_PyErr_Clear();
+        invalidate();
+        return NULL;
+    }
+    cls = pa_PyObject_GetAttrString(mod, "_PillowBasicCore");
+    pa_Py_DecRef(mod);
+    if (!cls) {
+        pa_PyErr_Clear();
+        invalidate();
+        return NULL;
+    }
+    core = pa_PyObject_CallNoArgs(cls);
+    pa_Py_DecRef(cls);
+    if (!core) {
+        pa_PyErr_Clear();
+        invalidate();
+        return NULL;
+    }
+    if (!boundary()) {
+        pa_Py_DecRef(core);
+        return NULL;
+    }
+    return core;
 }
 static PyMethodDef entry_definition = {
     "_entry", private_entry, METH_NOARGS, NULL
+};
+static PyMethodDef open_provider_definition = {
+    "_open_provider", private_open_provider, METH_O, NULL
 };
 
 /* Only the native launch path calls this, after all Phase-2 verifications.
@@ -124,6 +175,10 @@ static int isolated_bootstrap(void *handle, const wchar_t *const *paths, size_t 
     lifecycle.entry = pa_PyCFunction_NewEx(&entry_definition, NULL, NULL);
     if (!dict || !lifecycle.entry ||
         pa_PyDict_SetItemString(dict, "_entry", lifecycle.entry) < 0)
+        return invalidate();
+    lifecycle.open_provider = pa_PyCFunction_NewEx(&open_provider_definition, NULL, NULL);
+    if (!lifecycle.open_provider ||
+        pa_PyDict_SetItemString(dict, "_open_provider", lifecycle.open_provider) < 0)
         return invalidate();
     lifecycle.snapshot = pa_PyDict_Copy(dict);
     if (!lifecycle.snapshot) return invalidate();

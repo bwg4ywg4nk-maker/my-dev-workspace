@@ -1,0 +1,14 @@
+myenv/
+venv/
+*.pkg
+repomix-output.xml
+__pycache__/
+.git/
+docs/
+tests/
+*.h
+tools/restricted_launcher/*
+src/presentation_agent/_deployment_evidence.py
+*.h
+tools/restricted_launcher/*
+src/presentation_agent/_deployment_evidence.py

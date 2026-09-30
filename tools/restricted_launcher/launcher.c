@@ -183,8 +183,16 @@ int main(void) {
 #endif
     free(buf);
     if (handle) {
-        /* No verified deployment search paths are authorized yet. */
+#ifdef PA_NATIVE_BINDING_ADAPTER
+        if (production_checks.attachment && production_checks.attachment->modules) {
+            (void)isolated_bootstrap(handle, production_checks.attachment->modules,
+                                     production_checks.attachment->module_count);
+        } else {
+            (void)isolated_bootstrap(handle, NULL, 0);
+        }
+#else
         (void)isolated_bootstrap(handle, NULL, 0);
+#endif
         /* Process-lifetime Python references: never unload a live runtime. */
     }
 #endif
